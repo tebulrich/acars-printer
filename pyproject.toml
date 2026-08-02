@@ -1,0 +1,42 @@
+[project]
+name = "acars-bridge"
+version = "0.1.0"
+description = "Standalone Hoppie ACARS client with thermal printing (Station + Observer)."
+readme = "README.md"
+authors = [
+    { name = "Tebin Ulrich", email = "dlhairbus320@googlemail.com" }
+]
+requires-python = ">=3.12"
+dependencies = [
+    "cryptography>=50.0.0",
+    "httpx>=0.28.1",
+    "platformdirs>=4.11.0",
+    "pynput>=1.8.2",
+    "pyside6>=6.8",
+    "python-escpos>=3.1",
+    "typer>=0.27.0",
+]
+
+[project.scripts]
+acars-bridge = "acars_bridge.cli:app"
+
+[build-system]
+requires = ["uv_build>=0.12.1,<0.13.0"]
+build-backend = "uv_build"
+
+[dependency-groups]
+dev = [
+    "pytest>=9.1.1",
+    "ruff>=0.16.1",
+]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["src"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py312"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP"]
