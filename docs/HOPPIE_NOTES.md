@@ -6,12 +6,11 @@ Official API: <https://www.hoppie.nl/acars/system/tech.html>
 
 Hoppie uses short HTTP request/response cycles — not a shared persistent socket.
 
-- **Station:** this app `poll`s (consumes queue, takes callsign lock).
-- **Observer:** this app `peek`s while another client (e.g. PMDG/TFDi) `poll`s
-  with the **same Hoppie logon**. That is two clients / two request streams.
-  Peek does not consume like poll and does not show you online, but it is
-  heavier (up to ~24h of messages). Keep Observer intervals conservative
-  (default ≥ 45–60s, with jitter).
+- **This app (local tap):** redirects `www.hoppie.nl` to itself, forwards each
+  request to the real Hoppie server, and prints reply payloads (including inline
+  `inforeq` weather). No second Hoppie logon. Requires Administrator on Windows.
+- **Aircraft client:** still owns the callsign via `poll` and sends weather /
+  telex / CPDLC. This print bridge does not send; it only copies.
 
 ## Callsign lock
 
@@ -26,18 +25,29 @@ third-party flight. Never silently steal the lock.
 
 ## Info requests (METAR / TAF / ATIS)
 
-Station mode only (`type=inforeq`, `to=SERVER`). Reply is **inline** in the HTTP
-response (no poll required):
+Done by the **aircraft client** (`type=inforeq`, `to=SERVER`).
+
+What you see on the public [message log](https://www.hoppie.nl/acars/system/log.html)
+is the **outbound request** (`From=your callsign`, `To=n/a`, `Type=inforeq`).
+Hoppie’s docs say the weather/ATIS body is returned **inline** in that client’s
+HTTP reply (“straight away”) — it is not queued for `peek`.
+
+The local tap prints those inline replies because it sees the plane’s own HTTP
+response. Packet reference:
 
 ```text
 packet=metar EGLL
 packet=taf EGLL
-packet=vatatis EGLL_D_ATIS   # VATSIM departure D-ATIS (Fenix-style)
-packet=vatatis EGLL_A_ATIS   # VATSIM arrival D-ATIS
-packet=vatatis EGLL          # fallback when no split ATIS
+packet=vatatis EGLL          # combined ATIS (EDDN/EDDS-style — what Hoppie resolves)
+packet=vatatis EGLL_D_ATIS   # only when that split station is online on VATSIM
+packet=vatatis EGLL_A_ATIS   # arrival split, same rule
 packet=ivaoatis LFPG
 packet=peatis KLAX
 ```
+
+Inventing ``ICAO_D_ATIS`` when only ``ICAO_ATIS`` is online yields
+``THIS ATIS IS NOT AVAILABLE``. This app checks the VATSIM datafeed first and
+asks Hoppie with plain ICAO for combined stations.
 
 Example reply: `ok {acars info {EGLL 021350Z …}}` (type `info` stored as `inforeq`).
 

@@ -1,13 +1,18 @@
 from __future__ import annotations
 
+import time
 from collections.abc import Callable
 
+from acars_bridge.hoppie.atis_text import atis_reply_unavailable, vatatis_airport_key
 from acars_bridge.hoppie.types import HoppieMessage
 from acars_bridge.models.messages import MessageRepository
 from acars_bridge.models.settings import SettingsStore
 from acars_bridge.printing.base import PrinterSettings
 from acars_bridge.services.fingerprint import fingerprint_for
 from acars_bridge.services.print_manager import PrintManager
+
+# Plane clients often try ICAO_D then plain ICAO within a couple seconds.
+_UNAVAILABLE_COOLDOWN_SEC = 120.0
 
 
 class MessageIngestionService:
@@ -20,12 +25,14 @@ class MessageIngestionService:
         self._repo = repo
         self._settings = settings
         self._print_manager = print_manager
+        self._recent_unavailable: dict[tuple[str, str], float] = {}
 
     def ingest(
         self,
         messages: list[HoppieMessage],
         *,
         auto_print: bool | None = None,
+        force_print: bool = False,
     ) -> dict[str, int]:
         stats = {"stored": 0, "printed": 0, "duplicates": 0, "failed_prints": 0}
         printable = self._settings.printable_types()
@@ -39,12 +46,26 @@ class MessageIngestionService:
         for message in messages:
             fp = fingerprint_for(message)
             stored = self._repo.insert_inbound(message, fp)
+            unavailable = atis_reply_unavailable(message.normalized_body)
+            wants_print = do_print and message.message_type.value in printable
+            if wants_print and unavailable and self._suppress_unavailable_fallback(message):
+                wants_print = False
             if stored is None:
                 stats["duplicates"] += 1
+                # Re-print only real content refreshes — never spam "not available".
+                if force_print and wants_print and not unavailable:
+                    existing = self._repo.get_by_fingerprint(fp)
+                    if existing is not None:
+                        result = self._print_manager.print_message(
+                            existing, printer_settings, is_reprint=True
+                        )
+                        if result == "printed":
+                            stats["printed"] += 1
+                        else:
+                            stats["failed_prints"] += 1
                 continue
 
-            should_print = do_print and message.message_type.value in printable
-            if not should_print:
+            if not wants_print:
                 stats["stored"] += 1
                 continue
 
@@ -64,3 +85,24 @@ class MessageIngestionService:
         auto_print: bool | None = None,
     ) -> dict[str, int]:
         return self.ingest(fetch(logon, callsign), auto_print=auto_print)
+
+    def _suppress_unavailable_fallback(self, message: HoppieMessage) -> bool:
+        """Print first 'not available' per airport; skip D/A fallback copies."""
+        airport = vatatis_airport_key(message.normalized_body) or "_bare"
+        key = (message.callsign.upper(), airport)
+        now = time.monotonic()
+        self._prune_unavailable(now)
+        previous = self._recent_unavailable.get(key)
+        if previous is not None and (now - previous) < _UNAVAILABLE_COOLDOWN_SEC:
+            return True
+        self._recent_unavailable[key] = now
+        return False
+
+    def _prune_unavailable(self, now: float) -> None:
+        stale = [
+            key
+            for key, seen in self._recent_unavailable.items()
+            if (now - seen) >= _UNAVAILABLE_COOLDOWN_SEC
+        ]
+        for key in stale:
+            del self._recent_unavailable[key]

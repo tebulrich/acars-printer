@@ -33,9 +33,7 @@ class AppSession:
     print_manager: PrintManager
 
     def transport(self):
-        if self.settings.mode() is ClientMode.OBSERVER:
-            return self.observer
-        return self.station
+        return self.observer
 
     def rebuild_printer(self, *, use_fake_printer: bool = False) -> None:
         """Recreate print stack after printer settings change."""
@@ -78,6 +76,7 @@ def build_session(
     else:
         printer = ConsoleMessagePrinter()
 
+    settings.set_mode(ClientMode.OBSERVER)
     print_manager = PrintManager(messages, printer)
     ingestion = MessageIngestionService(messages, settings, print_manager)
     outbound = OutboundMessageService(station, messages, settings, ingestion)

@@ -1,0 +1,3 @@
+ok {acars info {VATATIS EDDP_D_ATIS
+THIS ATIS IS NOT
+AVAILABLE}}

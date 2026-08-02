@@ -84,7 +84,7 @@ def cups_pos_label(name: str) -> str:
 
 def label_for_destination(destination: str) -> str:
     if destination == "console" or not destination:
-        return "console"
+        return "console (log only)"
     if destination.startswith("cups-raw://"):
         return cups_pos_label(destination.removeprefix("cups-raw://"))
     if destination.startswith("cups://"):
@@ -104,7 +104,7 @@ def list_printer_choices(current: str | None = None) -> list[PrinterChoice]:
 
     Preserves a custom current destination (tcp://, file://, …) if set.
     """
-    choices: list[PrinterChoice] = [PrinterChoice("console", "console")]
+    choices: list[PrinterChoice] = [PrinterChoice("console (log only)", "console")]
 
     if sys.platform.startswith("win"):
         for name in list_win32_printer_names():
@@ -126,7 +126,7 @@ def destination_from_label(label: str, choices: list[PrinterChoice]) -> str:
     for choice in choices:
         if choice.label == label or choice.destination == label:
             return choice.destination
-    if not label or label == "console":
+    if not label or label in {"console", "console (log only)"}:
         return "console"
     # Typed/custom URI pasted into an older UI, or unknown name.
     if "://" in label:

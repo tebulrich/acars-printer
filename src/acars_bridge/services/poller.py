@@ -90,14 +90,10 @@ class BackgroundPoller:
             self._emit()
             return
 
-        # Read mode every cycle so Settings changes apply without restart.
-        mode = self._session.settings.mode()
-        observing = mode == ClientMode.OBSERVER
-        transport = self._session.observer if observing else self._session.station
-        self.status.last_mode = mode.value
-        self.status.last_hoppie_type = "peek" if observing else "poll"
+        self.status.last_mode = ClientMode.OBSERVER.value
+        self.status.last_hoppie_type = "peek"
         try:
-            messages = transport.fetch(logon, callsign)
+            messages = self._session.observer.fetch(logon, callsign)
             stats = self._session.ingestion.ingest(messages)
             self.status.last_stats = stats
             self.status.last_error = None
@@ -111,23 +107,13 @@ class BackgroundPoller:
             self._failures += 1
             self.status.callsign_in_use = True
             self.status.last_check = datetime.now(UTC)
-            if observing:
-                # Live Hoppie behavior: peek/ping still fail with this error when
-                # `from` is locked by a *different* logon. Same-logon second clients
-                # (PMDG + this app) work; watching another person's logon does not.
-                self.status.last_error = (
-                    f"Hoppie rejected Observer peek for {callsign}: callsign locked "
-                    "by another logon. Observer only works beside an aircraft client "
-                    "that uses the *same* Hoppie logon as this app — not someone "
-                    "else's flight/account."
-                )
-            else:
-                self.status.last_error = (
-                    f"Callsign {callsign} is locked by another Hoppie station. "
-                    "If that client uses this same logon, switch Mode → Observer. "
-                    "Otherwise stop the other client, or use its logon here."
-                )
-            # Keep raw server text available for debugging.
+            # Peek fails when `from` is locked by a *different* logon.
+            # Same-logon second clients (aircraft + this app) work.
+            self.status.last_error = (
+                f"Hoppie rejected peek for {callsign}: callsign locked "
+                "by another logon. Use the *same* Hoppie logon as the aircraft "
+                "client — not someone else's flight/account."
+            )
             if str(exc) and str(exc) not in self.status.last_error:
                 self.status.last_error = f"{self.status.last_error} ({exc})"
         except HoppieError as exc:

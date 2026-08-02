@@ -6,12 +6,11 @@ Python greenfield standalone Hoppie client. See the Cursor plan for product deta
 
 - Python 3.12+, uv, pytest, ruff, typer, httpx, python-escpos, cryptography
 
-## Modes
+## Mode
 
-| Mode | Transport | Send | Use |
-|------|-----------|------|-----|
-| Station | `poll` | Yes | Standalone |
-| Observer | `peek` | No | Beside PMDG/TFDi/etc. |
+**Local tap**: redirect Hoppie through this app, forward to the real server,
+print whatever the aircraft receives (including inline weather). No second
+Hoppie logon. Requires Administrator on Windows (hosts + ports 80/443).
 
 ## Phase 1 checklist
 

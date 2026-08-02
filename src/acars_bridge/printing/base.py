@@ -10,7 +10,7 @@ from acars_bridge.models.messages import StoredMessage
 class PrinterSettings:
     destination: str
     paper_width: str = "80"
-    cut_enabled: bool = False
+    cut_enabled: bool = True
     character_width_override: int | None = None
 
     def characters_per_line(self) -> int:

@@ -19,3 +19,11 @@ htmlcov/
 *.bin
 .idea/
 .vscode/
+
+# Secrets / local runtime data (never commit)
+*.sqlite3
+*.sqlite3-*
+settings.key
+debug.log
+tap-certs/
+**/tap-certs/

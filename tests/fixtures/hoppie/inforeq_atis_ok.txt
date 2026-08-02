@@ -1,0 +1,3 @@
+ok {acars info {EDDP ATIS INFO A
+RWY IN USE 26L
+QNH 1019}}

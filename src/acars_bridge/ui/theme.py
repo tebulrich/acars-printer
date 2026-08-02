@@ -35,7 +35,7 @@ def app_stylesheet() -> str:
         background-color: {c["panel"]};
         border: none;
     }}
-    QFrame#Chip {{
+    QLabel#Chip {{
         background-color: {c["panel_alt"]};
         border: 1px solid {c["border"]};
         border-radius: 6px;
@@ -76,6 +76,11 @@ def app_stylesheet() -> str:
     QPushButton:pressed {{
         background-color: {c["accent_dim"]};
     }}
+    QPushButton:disabled {{
+        background-color: {c["panel"]};
+        color: {c["muted"]};
+        border: 1px solid {c["border"]};
+    }}
     QPushButton#Primary {{
         background-color: {c["accent_dim"]};
         border: 1px solid {c["accent_dim"]};
@@ -85,15 +90,10 @@ def app_stylesheet() -> str:
         background-color: {c["accent"]};
         border: 1px solid {c["accent"]};
     }}
-    QPushButton#MessageRow {{
-        text-align: left;
-        font-weight: 500;
-        padding: 10px 12px;
-        min-height: 56px;
-    }}
-    QPushButton#MessageRow[selected="true"] {{
-        background-color: {c["border"]};
-        border: 1px solid {c["accent_dim"]};
+    QPushButton#Primary:disabled {{
+        background-color: {c["panel"]};
+        border: 1px solid {c["border"]};
+        color: {c["muted"]};
     }}
     QLineEdit, QPlainTextEdit, QTextEdit, QComboBox, QSpinBox {{
         background-color: {c["panel_alt"]};

@@ -66,16 +66,33 @@ class EscPosMessagePrinter:
             raise PrinterError(f"ESC/POS print failed: {exc}") from exc
 
     def _render(self, printer: object, formatted_body: str, settings: PrinterSettings) -> None:
-        printer.set(bold=True)  # type: ignore[attr-defined]
-        printer.text("ACARS PRINT BRIDGE\n")  # type: ignore[attr-defined]
-        printer.set(bold=False)  # type: ignore[attr-defined]
         body = formatted_body if formatted_body.endswith("\n") else formatted_body + "\n"
         printer.text(body)  # type: ignore[attr-defined]
         if settings.cut_enabled:
-            try:
-                printer.cut()  # type: ignore[attr-defined]
-            except Exception:
-                pass
+            self._tear_or_cut(printer)
+
+    def _tear_or_cut(self, printer: object) -> None:
+        """Advance to the tear bar, then partial-cut when the mechanism exists.
+
+        Cheap POS-80 units often have only a serrated tear edge (or a partial
+        cutter). A full cut can jam them; skipping feed leaves the last lines
+        under the head so ripping tears the receipt crooked — Fenix avoids that
+        by feeding before cut/tear.
+        """
+        try:
+            printer.cut(mode="PART")  # type: ignore[attr-defined]
+            return
+        except Exception:
+            pass
+        try:
+            printer.print_and_feed(6)  # type: ignore[attr-defined]
+            return
+        except Exception:
+            pass
+        try:
+            printer.text("\n\n\n\n\n\n")  # type: ignore[attr-defined]
+        except Exception:
+            pass
 
     def _print_via_cups_text(self, printer_name: str, formatted_body: str) -> None:
         """Submit plain text so the CUPS driver (laser/inkjet/MFP) can render it."""

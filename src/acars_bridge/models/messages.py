@@ -138,6 +138,19 @@ class MessageRepository:
             ).fetchone()
         return StoredMessage.from_row(row) if row else None
 
+    def get_by_fingerprint(self, fingerprint: str) -> StoredMessage | None:
+        with self._db.lock:
+            row = self._db.conn.execute(
+                """
+                SELECT * FROM messages
+                WHERE fingerprint = ?
+                ORDER BY id DESC
+                LIMIT 1
+                """,
+                (fingerprint,),
+            ).fetchone()
+        return StoredMessage.from_row(row) if row else None
+
     def list_recent(self, limit: int = 20) -> list[StoredMessage]:
         with self._db.lock:
             rows = self._db.conn.execute(

@@ -69,14 +69,12 @@ class SettingsStore:
         self.set("callsign", callsign.strip().upper())
 
     def mode(self) -> ClientMode:
-        raw = self.get("client_mode", ClientMode.STATION.value) or ClientMode.STATION.value
-        try:
-            return ClientMode(raw)
-        except ValueError:
-            return ClientMode.STATION
+        # Print-bridge is Observer-only (peek beside the aircraft client).
+        return ClientMode.OBSERVER
 
     def set_mode(self, mode: ClientMode) -> None:
-        self.set("client_mode", mode.value)
+        # Ignore station; always persist observer.
+        self.set("client_mode", ClientMode.OBSERVER.value)
 
     def hoppie_url(self) -> str:
         return self.get("hoppie_url", HOPPIE_DEFAULT_URL) or HOPPIE_DEFAULT_URL
@@ -122,28 +120,12 @@ class SettingsStore:
             value = 1.0
         self.set("ui_scale", f"{max(0.85, min(1.5, value)):.2f}")
 
-    def hotkey(self, action: str) -> str:
-        """Configured global shortcut for an action, or '' if unset."""
-        return (self.get(f"hotkey.{action}", "") or "").strip()
-
-    def set_hotkey(self, action: str, sequence: str | None) -> None:
-        key = f"hotkey.{action}"
-        value = (sequence or "").strip()
-        self.set(key, value if value else None)
-
-    def hotkey_bindings(self) -> dict[str, str]:
-        """Raw stored hotkey map (action -> sequence)."""
-        from acars_bridge.hotkey_actions import HOTKEY_ACTIONS
-
-        out: dict[str, str] = {}
-        for item in HOTKEY_ACTIONS:
-            seq = self.hotkey(item.action)
-            if seq:
-                out[item.action] = seq
-        return out
-
     def cut_enabled(self) -> bool:
-        return (self.get("cut_enabled", "0") or "0") in {"1", "true", "yes", "on"}
+        # Default on: thermal POS needs feed-to-tear-bar after each receipt.
+        return (self.get("cut_enabled", "1") or "1") in {"1", "true", "yes", "on"}
+
+    def set_cut_enabled(self, enabled: bool) -> None:
+        self.set("cut_enabled", "1" if enabled else "0")
 
     def printable_types(self) -> set[str]:
         raw = self.get("printable_types", "cpdlc,telex,inforeq") or "cpdlc,telex,inforeq"

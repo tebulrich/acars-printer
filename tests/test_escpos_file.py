@@ -18,5 +18,43 @@ def test_escpos_writes_file(app_session, fixture_text, tmp_path):
     EscPosMessagePrinter().print(message, body, settings)
 
     data = path.read_bytes()
-    assert b"ACARS PRINT BRIDGE" in data
+    assert b"ACARS PRINT BRIDGE" not in data
     assert b"FL360" in data
+    assert b"FLT" in data
+
+
+def test_escpos_tear_assist_feeds_before_cut(app_session, fixture_text, tmp_path):
+    messages = parse_response(fixture_text("cpdlc_short.txt"), "SWR14")
+    app_session.ingestion.ingest(messages, auto_print=False)
+    message = app_session.messages.list_recent(1)[0]
+
+    path = tmp_path / "cut.bin"
+    settings = PrinterSettings(
+        destination=f"file://{path}",
+        paper_width="80",
+        cut_enabled=True,
+    )
+    body = ThermalMessageFormatter().format(message, settings)
+    EscPosMessagePrinter().print(message, body, settings)
+
+    data = path.read_bytes()
+    # ESC d n  (print_and_feed) and/or GS V (cut)
+    assert b"\x1bd" in data or b"\x1dV" in data
+
+
+def test_escpos_cut_disabled_skips_tear_assist(app_session, fixture_text, tmp_path):
+    messages = parse_response(fixture_text("cpdlc_short.txt"), "SWR14")
+    app_session.ingestion.ingest(messages, auto_print=False)
+    message = app_session.messages.list_recent(1)[0]
+
+    path = tmp_path / "nocut.bin"
+    settings = PrinterSettings(
+        destination=f"file://{path}",
+        paper_width="80",
+        cut_enabled=False,
+    )
+    body = ThermalMessageFormatter().format(message, settings)
+    EscPosMessagePrinter().print(message, body, settings)
+
+    data = path.read_bytes()
+    assert b"\x1dV" not in data

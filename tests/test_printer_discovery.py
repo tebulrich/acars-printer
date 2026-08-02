@@ -25,7 +25,7 @@ def test_list_printer_choices_includes_console_and_cups(monkeypatch):
     )
     choices = list_printer_choices()
     assert choices[0].destination == "console"
-    assert choices[0].label == "console"
+    assert choices[0].label == "console (log only)"
     assert any(c.destination == "cups://Brother_MFC" for c in choices)
     assert any(c.destination == "cups-raw://Brother_MFC" for c in choices)
     assert any(c.label == "Kitchen_Thermal · POS ESC/POS" for c in choices)

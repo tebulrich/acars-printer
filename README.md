@@ -1,95 +1,73 @@
 # ACARS Print Bridge
 
-Standalone **Hoppie ACARS** client with thermal printing and a desktop UI.
+Windows app that sits beside a Hoppie ACARS aircraft client and prints what the
+plane receives (CPDLC, telex, weather / ATIS, and similar) on a local thermal or
+Windows printer.
 
-- **Station mode (default):** `poll` + send telex/CPDLC replies + print. You own the callsign.
-- **Observer mode:** `peek` + print only. Use when PMDG / TFDi / another client already holds the callsign **with the same Hoppie logon**.
-- **Requests (Station):** METAR / TAF / ATIS (ARR|DEP), PDC, and manual position reports — Fenix-like fields on the Requests tab.
+It does not open its own Hoppie station session. On Connect it intercepts
+traffic to `www.hoppie.nl`, forwards each request to the real server, and
+prints from the replies. Disconnect restores normal DNS / routing.
 
-No aircraft SDKs. Windows-first; Linux/macOS work for development and most features.
+Requires a [Hoppie](https://www.hoppie.nl/acars/) logon code in Settings (the
+same code the aircraft uses). Optional callsign filter limits printing to one
+flight.
 
-## Desktop UI (recommended)
+## Requirements
 
-Built with **PySide6 (Qt)** — native widgets, OS fonts, and DPI scaling. No canvas-drawn controls.
+- Windows
+- Python 3.12+ and [uv](https://github.com/astral-sh/uv) (for building or
+  running from source)
+- Administrator rights when Connected (ports 80/443, hosts file, WinDivert)
+- A printer destination configured in Settings (ESC/POS thermal or another
+  Windows printer)
 
-- Live status chips: mode, callsign, link, UTC
-- Message traffic list + detail pane
-- One-tap CPDLC replies: WILCO / ROGER / UNABLE / STANDBY
-- Telex compose bar
-- Settings: mode switch, logon (masked), printer dropdown (console + installed printers), paper width, auto-print
-- Background monitor with Start / Pause / Check now
-- Desktop notifications on new traffic
+## Run the Windows build
 
-```bash
+```powershell
+uv sync --group dev
+.\scripts\build_windows_exe.ps1
+```
+
+Start `dist\ACARS Print Bridge.exe` and accept the UAC prompt.
+
+1. Settings → Hoppie logon, printer, optional callsign filter → Save
+2. Connect
+3. Use ACARS in the aircraft as usual
+
+Refresh on the Messages tab reloads the list and bridge status. Debug opens the
+local support log (`%LOCALAPPDATA%\acars-bridge\acars-bridge\debug.log`).
+
+## Run from source
+
+```powershell
 uv sync
+# elevated shell
 uv run acars-bridge ui
 ```
 
-Shortcuts are **unset by default**. Configure them under **Shortcuts** (global — work even when the window is unfocused). Use Ctrl/Alt/Meta chords or F-keys.
+## CLI
 
-Reply letter keys are disabled while typing in a text field.
-
-Configure inside **Settings**, or via CLI first:
-
-```bash
-uv run acars-bridge configure \
-  --callsign SWR14 \
-  --logon YOUR_HOPPIE_LOGON \
-  --mode station \
-  --printer console \
-  --width 80
-```
-
-## CLI (still available)
-
-```bash
-uv run acars-bridge poll --once
-uv run acars-bridge observe --once
-uv run acars-bridge send-telex SWROPS "HELLO OPS"
-uv run acars-bridge request-metar EGLL
-uv run acars-bridge request-atis EGLL --side dep
-uv run acars-bridge request-pdc --station EDDF --dep EDDF --dest EDDM --stand A36 --atis D
-uv run acars-bridge send-position EDUU --lat N5030.0 --lon E00845.0 --alt FL360 --time 1435Z
-uv run acars-bridge reply 1 WILCO
-uv run acars-bridge history
+```powershell
+uv run acars-bridge version
+uv run acars-bridge configure --callsign SWR14 --logon <code>
+uv run acars-bridge status
 uv run acars-bridge test-print
+uv run acars-bridge history
 ```
 
-Requests require **Station** mode (same logon as the flight).
-
-## Observer note
-
-Observer creates a **second** HTTP client to Hoppie (`peek`). It does not share the aircraft connection. Keep frequency low (≥45–60s).
-
-You must use the **same Hoppie logon** as the aircraft client. Hoppie rejects peek when the callsign is locked by a different account — so you cannot observe someone else’s flight with your own logon.
-
-## Printing
-
-```bash
-uv run acars-bridge test-print --destination file:///tmp/acars-test.bin
-uv run acars-bridge configure --printer tcp://192.168.1.50:9100
-# Installed system printer (CUPS on Linux/macOS, Win32 on Windows):
-uv run acars-bridge configure --printer "cups://Your_Printer_Name"
-uv run acars-bridge configure --printer "win32://Your Printer Name"
-```
-
-- `cups://Name` — **driver** text (Brother/HP laser/inkjet).
-- `cups-raw://Name` — **POS / ESC/POS** raw bytes on that CUPS queue (thermal).
-- `tcp://host:9100` — network ESC/POS thermal directly (best for POS-80).
-
-In the UI each CUPS queue appears twice (`· driver` / `· POS ESC/POS`) so you can keep both printers configured.
-
-**Windows USB POS-80:** Windows SMB printer sharing often returns `ACCESS_DENIED` for raw jobs from Linux. Run [`scripts/windows_pos_raw_bridge.ps1`](scripts/windows_pos_raw_bridge.ps1) on the Windows PC, then point the app at `tcp://192.168.1.55:9100`.
+`observe` still exists for peek-based use; the UI Connect path is the tap
+described above.
 
 ## Tests
 
-```bash
+```powershell
 uv run pytest
 ```
 
-Automated tests never call live Hoppie or a physical printer.
+## Notes
 
-## Docs
-
-- [`PLAN.md`](PLAN.md)
-- [`docs/HOPPIE_NOTES.md`](docs/HOPPIE_NOTES.md)
+- Protocol reference: [Hoppie ACARS server API](https://www.hoppie.nl/acars/system/tech.html)
+- WinDivert 2.2.2 binaries used by the tap live under `third_party/WinDivert`
+  (LGPL; see that directory’s LICENSE)
+- App data (SQLite, encrypted logon, tap CA certs) is under
+  `%LOCALAPPDATA%\acars-bridge\acars-bridge`

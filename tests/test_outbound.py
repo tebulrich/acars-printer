@@ -7,9 +7,7 @@ from acars_bridge.config import AppPaths
 from acars_bridge.hoppie.client import HoppieClient
 from acars_bridge.hoppie.errors import CallsignInUseError, SendNotAllowedError
 from acars_bridge.hoppie.observer import ObserverTransport
-from acars_bridge.hoppie.parser import parse_response
 from acars_bridge.hoppie.station import StationTransport
-from acars_bridge.hoppie.types import ClientMode
 from acars_bridge.services.session import build_session
 
 
@@ -63,96 +61,29 @@ def test_callsign_in_use(fixture_text):
         StationTransport(client).fetch("secret", "SWR14")
 
 
-def test_send_telex_and_cpdlc_reply(tmp_path, fixture_text):
-    router = _Router(
-        {
-            "telex": "ok",
-            "cpdlc": "ok",
-        }
-    )
+def test_session_outbound_is_disabled(tmp_path, fixture_text):
+    """Print-bridge never sends; aircraft client owns the callsign."""
+    router = _Router({"telex": "ok", "inforeq": fixture_text("inforeq_metar.txt")})
     client = HoppieClient("https://example.test/connect.html", transport=router)
     session = build_session(AppPaths.for_testing(tmp_path), client=client, use_fake_printer=True)
     session.settings.set_callsign("SWR14")
     session.settings.set_hoppie_logon("secret-logon-code")
-    session.settings.set_mode(ClientMode.STATION)
-
-    # Seed inbound CPDLC
-    inbound = parse_response(fixture_text("cpdlc_short.txt"), "SWR14")
-    session.ingestion.ingest(inbound, auto_print=False)
-    msg_id = session.messages.list_recent(1)[0].id
-
-    out_telex = session.outbound.send_telex("SWROPS", "HELLO OPS")
-    assert out_telex.direction == "out"
-    assert out_telex.send_status == "sent"
-
-    out_reply = session.outbound.reply_cpdlc(msg_id, "WILCO")
-    assert out_reply.normalized_body == "WILCO"
-    assert out_reply.mrn == 15
-
-    from urllib.parse import parse_qs
-
-    types = [parse_qs(r.content.decode())["type"][0] for r in router.requests]
-    assert "telex" in types
-    assert "cpdlc" in types
-    assert "poll" not in types  # sends only
-
-    session.settings.set_mode(ClientMode.OBSERVER)
-    with pytest.raises(SendNotAllowedError):
-        session.outbound.send_telex("SWROPS", "NOPE")
-
-    session.close()
-
-
-def test_request_weather_ingests_inline_inforeq(tmp_path, fixture_text):
-    router = _Router({"inforeq": fixture_text("inforeq_metar.txt")})
-    client = HoppieClient("https://example.test/connect.html", transport=router)
-    session = build_session(AppPaths.for_testing(tmp_path), client=client, use_fake_printer=True)
-    session.settings.set_callsign("SWR14")
-    session.settings.set_hoppie_logon("secret-logon-code")
-    session.settings.set_mode(ClientMode.STATION)
 
     from acars_bridge.hoppie.requests import WeatherKind
 
-    rows = session.outbound.request_weather(WeatherKind.METAR, "EGLL")
-    from urllib.parse import parse_qs
-
-    assert parse_qs(router.requests[0].content.decode())["type"][0] == "inforeq"
-    assert parse_qs(router.requests[0].content.decode())["packet"][0] == "metar EGLL"
-    inbound = [r for r in rows if r.direction == "in"]
-    assert inbound
-    assert "EGLL" in inbound[0].normalized_body
-    assert inbound[0].message_type == "inforeq"
+    with pytest.raises(SendNotAllowedError):
+        session.outbound.send_telex("SWROPS", "HELLO")
+    with pytest.raises(SendNotAllowedError):
+        session.outbound.request_weather(WeatherKind.METAR, "EGLL")
+    assert not router.requests
     session.close()
 
 
-def test_request_pdc_and_position(tmp_path):
-    router = _Router({"telex": "ok", "position": "ok"})
-    client = HoppieClient("https://example.test/connect.html", transport=router)
-    session = build_session(AppPaths.for_testing(tmp_path), client=client, use_fake_printer=True)
-    session.settings.set_callsign("DLH4KM")
-    session.settings.set_hoppie_logon("secret-logon-code")
+def test_settings_mode_is_always_observer(tmp_path):
+    session = build_session(AppPaths.for_testing(tmp_path), use_fake_printer=True)
+    from acars_bridge.hoppie.types import ClientMode
+
     session.settings.set_mode(ClientMode.STATION)
-
-    pdc = session.outbound.request_pdc(
-        station="EDDF",
-        departure="EDDF",
-        destination="EDDM",
-        aircraft_type="A320",
-        stand="A36",
-        atis_letter="D",
-    )
-    assert "REQUEST PREDEP CLEARANCE" in pdc.normalized_body
-
-    pos = session.outbound.send_position(
-        to="EDUU",
-        latitude="N5030.0",
-        longitude="E00845.0",
-        altitude="FL360",
-        time_utc="1435Z",
-    )
-    assert pos.message_type == "position"
-    from urllib.parse import parse_qs
-
-    types = [parse_qs(r.content.decode())["type"][0] for r in router.requests]
-    assert types == ["telex", "position"]
+    assert session.settings.mode() is ClientMode.OBSERVER
+    assert session.transport() is session.observer
     session.close()

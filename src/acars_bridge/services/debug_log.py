@@ -2,15 +2,19 @@ from __future__ import annotations
 
 import threading
 from collections import deque
+from collections.abc import Callable
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
+
+from acars_bridge.redaction import redact
 
 
 class DebugLog:
     """Ring-buffer + append-only file log for UI/support pastebacks.
 
-    Never write secrets here — callers must pass already-redacted values.
+    Every line is passed through ``redact()`` so Hoppie logon codes never
+    land in debug.log or copy-paste exports.
     """
 
     def __init__(
@@ -19,10 +23,12 @@ class DebugLog:
         *,
         max_lines: int = 800,
         max_file_bytes: int = 1_500_000,
+        get_logon: Callable[[], str | None] | None = None,
     ) -> None:
         self.path = path
         self._max_lines = max_lines
         self._max_file_bytes = max_file_bytes
+        self._get_logon = get_logon
         self._lock = threading.Lock()
         self._lines: deque[str] = deque(maxlen=max_lines)
         self.path.parent.mkdir(parents=True, exist_ok=True)
@@ -62,7 +68,7 @@ class DebugLog:
         body = self.text().strip()
         lines.append(body if body else "(empty)")
         lines.append("=== end ===")
-        return "\n".join(lines)
+        return self._redact("\n".join(lines))
 
     def clear(self) -> None:
         with self._lock:
@@ -70,12 +76,22 @@ class DebugLog:
             self.path.write_text("", encoding="utf-8")
         self.info("log_cleared")
 
+    def _redact(self, text: str) -> str:
+        logon = None
+        if self._get_logon is not None:
+            try:
+                logon = self._get_logon()
+            except Exception:  # noqa: BLE001
+                logon = None
+        return redact(text, logon)
+
     def _write(self, level: str, event: str, fields: dict[str, Any]) -> None:
         stamp = datetime.now(UTC).strftime("%Y-%m-%dT%H:%M:%SZ")
         extras = " ".join(f"{key}={_fmt(value)}" for key, value in fields.items())
         line = f"{stamp} [{level}] {event}"
         if extras:
             line = f"{line} {extras}"
+        line = self._redact(line)
         with self._lock:
             self._lines.append(line)
             with self.path.open("a", encoding="utf-8") as handle:

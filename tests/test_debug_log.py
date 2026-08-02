@@ -31,3 +31,15 @@ def test_debug_log_clear(tmp_path):
     log.clear()
     assert "keep_me" not in log.text()
     assert "log_cleared" in log.text()
+
+
+def test_debug_log_redacts_logon(tmp_path):
+    path = tmp_path / "debug.log"
+    secret = "MySecretLogon99"
+    log = DebugLog(path, get_logon=lambda: secret)
+    log.info("tap_dbg", message=f"path='/acars/system/connect.html?logon={secret}&from=X'")
+    text = log.text()
+    assert secret not in text
+    assert "REDACTED_LOGON" in text
+    paste = log.paste_block()
+    assert secret not in paste
