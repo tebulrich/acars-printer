@@ -16,7 +16,8 @@ class PrinterSettings:
     def characters_per_line(self) -> int:
         if self.character_width_override:
             return self.character_width_override
-        return 32 if self.paper_width == "58" else 42
+        # ESC/POS Font A: ~32 cols on 58 mm, ~48 on 80 mm (576 dots / 12).
+        return 32 if self.paper_width == "58" else 48
 
 
 class MessagePrinter(Protocol):

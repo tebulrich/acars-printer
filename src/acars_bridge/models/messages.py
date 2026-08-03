@@ -158,6 +158,19 @@ class MessageRepository:
             ).fetchall()
         return [StoredMessage.from_row(row) for row in rows]
 
+    def clear_all(self) -> None:
+        """Drop message + print history (UI keeps only the current session)."""
+        with self._db.lock:
+            self._db.conn.execute("DELETE FROM print_jobs")
+            self._db.conn.execute("DELETE FROM messages")
+            try:
+                self._db.conn.execute(
+                    "DELETE FROM sqlite_sequence WHERE name IN ('messages', 'print_jobs')"
+                )
+            except sqlite3.OperationalError:
+                pass
+            self._db.conn.commit()
+
     def create_print_job(
         self,
         message_id: int,

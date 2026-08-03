@@ -92,6 +92,29 @@ class SettingsStore:
     def set_auto_print(self, enabled: bool) -> None:
         self.set("auto_print", "1" if enabled else "0")
 
+    def auto_connect(self) -> bool:
+        """Connect the Hoppie tap automatically when the UI starts."""
+        return (self.get("auto_connect", "1") or "1") in {"1", "true", "yes", "on"}
+
+    def set_auto_connect(self, enabled: bool) -> None:
+        self.set("auto_connect", "1" if enabled else "0")
+
+    def check_updates(self) -> bool:
+        return (self.get("check_updates", "1") or "1") in {"1", "true", "yes", "on"}
+
+    def set_check_updates(self, enabled: bool) -> None:
+        self.set("check_updates", "1" if enabled else "0")
+
+    def skipped_update_version(self) -> str | None:
+        value = (self.get("skipped_update_version") or "").strip()
+        return value or None
+
+    def set_skipped_update_version(self, version: str | None) -> None:
+        if not version:
+            self.set("skipped_update_version", None)
+        else:
+            self.set("skipped_update_version", version.lstrip("vV").strip())
+
     def printer_destination(self) -> str:
         return self.get("printer_destination", "console") or "console"
 

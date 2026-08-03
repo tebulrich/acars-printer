@@ -8,6 +8,19 @@ It does not open its own Hoppie station session. On Connect it intercepts
 traffic to `www.hoppie.nl`, forwards each request to the real server, and
 prints from the replies. Disconnect restores normal DNS / routing.
 
+## Compatibility
+
+Tested with:
+
+- iniBuilds A340-300
+- Aerosoft A340-600
+- TFDi Design MD-11
+
+It currently does **not** work with **PMDG** or **Fenix** products. Those
+clients talk to a vendor cloud / datalink service instead of sending Hoppie
+requests directly from this PC to `www.hoppie.nl`, so the tap never sees the
+traffic and cannot print it.
+
 ## How to use
 
 This is the path most people want: download the release, set two things, Connect,
@@ -37,7 +50,9 @@ already knows about.
 2. Run it. Accept the **Administrator / UAC** prompt. Without elevation the tap
    cannot bind ports 80/443 or edit the hosts file, so Connect will fail.
 
-Close other copies of the app first. Only one instance should run.
+Close other copies of the app first. Only one instance should run. Closing the
+window (or minimizing) sends the app to the system tray — right-click the tray
+icon → **Quit** to exit fully.
 
 ### 4. Settings (do this once)
 
@@ -49,6 +64,8 @@ Open the **Settings** tab:
 | Printer | Your POS / Windows printer. Use **Test print** on the Messages side to confirm paper comes out. |
 | Callsign filter | Optional. Empty = print every Hoppie flight seen on this PC. Set e.g. `SWR14` to only print that callsign. |
 | Paper width / cut | Match your roll (usually 80 mm). Leave cut/tear assist on for typical POS printers. |
+| Auto-connect | On by default — Connects the tap when the app starts (still needs Administrator). |
+| Check for updates | On by default — looks for a newer GitHub release and offers one-click install of the Windows exe. |
 
 Click **Save settings**.
 
@@ -83,8 +100,8 @@ You can then close the app.
 - Same Hoppie logon in Settings and in the aircraft?
 - Callsign filter empty, or exactly matching the plane’s callsign?
 - Did the plane actually request something (weather / ATIS / etc.) after Connect?
-- Aircraft clients that never talk to Hoppie’s `connect.html` cannot be printed
-  this way — only Hoppie HTTP traffic on this PC is visible.
+- Aircraft clients that never talk to Hoppie’s `connect.html` on this PC cannot
+  be printed this way (see [Compatibility](#compatibility) — e.g. PMDG, Fenix).
 
 ## Requirements
 

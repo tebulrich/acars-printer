@@ -66,10 +66,47 @@ class EscPosMessagePrinter:
             raise PrinterError(f"ESC/POS print failed: {exc}") from exc
 
     def _render(self, printer: object, formatted_body: str, settings: PrinterSettings) -> None:
+        self._prepare_page(printer)
         body = formatted_body if formatted_body.endswith("\n") else formatted_body + "\n"
         printer.text(body)  # type: ignore[attr-defined]
         if settings.cut_enabled:
             self._tear_or_cut(printer)
+
+    @staticmethod
+    def _prepare_page(printer: object) -> None:
+        """Full-width Font A, closer to cockpit printer scale.
+
+        Real PTA-45B-class printers run about 7 lines/inch on ~4.4\" paper.
+        POS-80 Font A at 1x height is denser/smaller on 80 mm stock, so use
+        double-height (not double-width) to keep 48 columns while matching the
+        taller glyph look of a flight-deck strip.
+        """
+        try:
+            printer.set(  # type: ignore[attr-defined]
+                align="left",
+                font="a",
+                bold=True,
+                double_width=False,
+                double_height=True,
+                density=8,
+            )
+        except Exception:
+            try:
+                printer.set(align="left", font="a", double_height=True)  # type: ignore[attr-defined]
+            except Exception:
+                pass
+        for attr, args in (
+            ("set_left_margin", (0,)),
+            ("left_margin", (0,)),
+        ):
+            fn = getattr(printer, attr, None)
+            if callable(fn):
+                try:
+                    fn(*args)
+                    break
+                except Exception:
+                    continue
+
 
     def _tear_or_cut(self, printer: object) -> None:
         """Advance to the tear bar, then partial-cut when the mechanism exists.

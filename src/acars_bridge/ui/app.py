@@ -8,7 +8,7 @@ from datetime import UTC, datetime
 from typing import Any
 
 from PySide6.QtCore import QObject, Qt, QTimer, Signal, Slot
-from PySide6.QtGui import QGuiApplication, QTextOption
+from PySide6.QtGui import QAction, QGuiApplication, QTextOption
 from PySide6.QtWidgets import (
     QApplication,
     QComboBox,
@@ -22,8 +22,10 @@ from PySide6.QtWidgets import (
     QListWidget,
     QListWidgetItem,
     QMainWindow,
+    QMenu,
     QPlainTextEdit,
     QPushButton,
+    QSystemTrayIcon,
     QTabWidget,
     QVBoxLayout,
     QWidget,
@@ -42,8 +44,10 @@ from acars_bridge.printing.discovery import (
 from acars_bridge.services.debug_log import DebugLog
 from acars_bridge.services.session import AppSession, build_session
 from acars_bridge.tap.service import TapService, TapStatus
+from acars_bridge.ui.icons import make_app_icon
 from acars_bridge.ui.notifications import notify
 from acars_bridge.ui.theme import COLORS, apply_theme, mono_font
+from acars_bridge.ui.updates import UpdateController
 
 
 class _TapBridge(QObject):
@@ -60,12 +64,20 @@ class AcarsBridgeApp(QMainWindow):
         self._selected_id: int | None = None
         self._message_ids: list[int] = []
         self._closing = False
+        self._quit_requested = False
+        self._tray: QSystemTrayIcon | None = None
+        self._tray_hint_shown = False
         self._printer_choices = list_printer_choices(session.settings.printer_destination())
         self._settings_widgets: dict[str, Any] = {}
 
         self.setWindowTitle(f"ACARS Print Bridge  ·  {__version__}")
         self.setMinimumSize(960, 640)
         self.resize(1100, 720)
+        self._app_icon = make_app_icon()
+        self.setWindowIcon(self._app_icon)
+
+        # Messages are session-scoped in the UI — don't keep yesterday's list.
+        self.session.messages.clear_all()
 
         self._bridge = _TapBridge(self)
         self._bridge.updated.connect(self._apply_tap_update)
@@ -91,6 +103,7 @@ class AcarsBridgeApp(QMainWindow):
         self._user_check_pending = False
 
         self._build_ui()
+        self._setup_tray()
         self._refresh_header()
         self._reload_messages()
         self._set_link_state("off")
@@ -99,6 +112,14 @@ class AcarsBridgeApp(QMainWindow):
         self._clock_timer.timeout.connect(self._tick_clock)
         self._clock_timer.start(1000)
         self._tick_clock()
+
+        # After the window is up — same path as the Connect button.
+        if self.session.settings.auto_connect():
+            QTimer.singleShot(400, self._maybe_auto_connect)
+
+        self._updates = UpdateController(self, session)
+        if self.session.settings.check_updates():
+            QTimer.singleShot(2500, lambda: self._updates.check(manual=False))
 
     def _build_ui(self) -> None:
         root = QWidget()
@@ -274,6 +295,18 @@ class AcarsBridgeApp(QMainWindow):
         auto_print.addItems(["on", "off"])
         auto_print.setCurrentText("on" if self.session.settings.auto_print() else "off")
 
+        auto_connect = QComboBox()
+        auto_connect.addItems(["on", "off"])
+        auto_connect.setCurrentText(
+            "on" if self.session.settings.auto_connect() else "off"
+        )
+
+        check_updates = QComboBox()
+        check_updates.addItems(["on", "off"])
+        check_updates.setCurrentText(
+            "on" if self.session.settings.check_updates() else "off"
+        )
+
         ui_scale = QComboBox()
         ui_scale.addItems(["85%", "100%", "115%", "125%"])
         scale = self.session.settings.ui_scale()
@@ -290,6 +323,8 @@ class AcarsBridgeApp(QMainWindow):
             "width": width,
             "cut": cut,
             "auto_print": auto_print,
+            "auto_connect": auto_connect,
+            "check_updates": check_updates,
             "ui_scale": ui_scale,
         }
 
@@ -299,13 +334,18 @@ class AcarsBridgeApp(QMainWindow):
         form.addRow("Paper width", width)
         form.addRow("Cut / tear assist", cut)
         form.addRow("Auto-print", auto_print)
+        form.addRow("Auto-connect", auto_connect)
+        form.addRow("Check for updates", check_updates)
         form.addRow("UI scale", ui_scale)
 
         help_lbl = QLabel(
             "Hoppie logon is the secret ACARS code from hoppie.nl (not a Windows "
             "username). The bridge injects it when the plane sends a blank/wrong "
             "logon. Connect as Administrator to intercept; Disconnect restores "
-            "normal Hoppie access. Cut / tear assist feeds paper to the tear bar."
+            "normal Hoppie access. Auto-connect starts the tap when the app "
+            "opens (still needs Administrator). Updates check GitHub Releases "
+            "and can one-click install the Windows exe. Cut / tear assist feeds "
+            "paper to the tear bar."
         )
         help_lbl.setObjectName("Muted")
         help_lbl.setWordWrap(True)
@@ -316,7 +356,59 @@ class AcarsBridgeApp(QMainWindow):
         save.clicked.connect(
             lambda: self._run_action("save_settings", self._save_settings)
         )
+        check_btn = QPushButton("Check for updates now")
+        check_btn.clicked.connect(lambda: self._updates.check(manual=True))
         form.addRow(save)
+        form.addRow(check_btn)
+
+    def _setup_tray(self) -> None:
+        if not QSystemTrayIcon.isSystemTrayAvailable():
+            self.debug.info("tray", available=False)
+            return
+        tray = QSystemTrayIcon(self._app_icon, self)
+        tray.setToolTip("ACARS Print Bridge")
+        menu = QMenu(self)
+        show_action = QAction("Show window", self)
+        show_action.triggered.connect(self._show_from_tray)
+        quit_action = QAction("Quit", self)
+        quit_action.triggered.connect(self._quit_from_tray)
+        menu.addAction(show_action)
+        menu.addSeparator()
+        menu.addAction(quit_action)
+        tray.setContextMenu(menu)
+        tray.activated.connect(self._on_tray_activated)
+        tray.show()
+        self._tray = tray
+        self.debug.info("tray", available=True)
+
+    def _show_from_tray(self) -> None:
+        self.showNormal()
+        self.raise_()
+        self.activateWindow()
+
+    def _quit_from_tray(self) -> None:
+        self._quit_requested = True
+        self.close()
+
+    @Slot(QSystemTrayIcon.ActivationReason)
+    def _on_tray_activated(self, reason: QSystemTrayIcon.ActivationReason) -> None:
+        if reason in (
+            QSystemTrayIcon.ActivationReason.Trigger,
+            QSystemTrayIcon.ActivationReason.DoubleClick,
+        ):
+            if self.isVisible() and not self.isMinimized():
+                self.hide()
+            else:
+                self._show_from_tray()
+
+    def _update_tray_tooltip(self) -> None:
+        if self._tray is None:
+            return
+        if self.tap.status.running:
+            filt = self.session.settings.callsign() or "ALL"
+            self._tray.setToolTip(f"ACARS Print Bridge · connected ({filt})")
+        else:
+            self._tray.setToolTip("ACARS Print Bridge · disconnected")
 
     def _chip(self, text: str) -> QLabel:
         chip = QLabel(text)
@@ -438,13 +530,14 @@ class AcarsBridgeApp(QMainWindow):
 
     def _debug_context(self) -> dict[str, Any]:
         settings = self.session.settings
+        tap = getattr(self, "tap", None)
         return {
             "mode": "tap",
             "hoppie_type": "tap",
             "callsign": settings.callsign() or "ALL",
             "printer": settings.printer_destination(),
-            "running": getattr(self, "tap", None) is not None and self.tap.status.running,
-            "exchanges": getattr(self, "tap", None).status.exchanges if getattr(self, "tap", None) else 0,
+            "running": tap is not None and tap.status.running,
+            "exchanges": tap.status.exchanges if tap is not None else 0,
         }
 
     def _run_action(
@@ -496,6 +589,20 @@ class AcarsBridgeApp(QMainWindow):
             color = COLORS["accent"]
         self.link_chip.setStyleSheet(self._chip_color_style(color))
 
+    def _maybe_auto_connect(self) -> None:
+        if self._closing or self.tap.status.running:
+            return
+        if not self.session.settings.auto_connect():
+            return
+        if not self._printer_ready():
+            self._flash(
+                "Auto-connect skipped — pick a printer in Settings first.",
+                error=True,
+            )
+            self.tabs.setCurrentIndex(1)
+            return
+        self._run_action("start", self._start_tap)
+
     def _start_tap(self) -> None:
         if not self._printer_ready():
             self._flash("Pick a printer in Settings first.", error=True)
@@ -510,6 +617,7 @@ class AcarsBridgeApp(QMainWindow):
             return
         self._sync_connection_buttons(running=True)
         self._set_link_state("ok", datetime.now(UTC))
+        self._update_tray_tooltip()
         note = self.tap.status.last_error
         self._flash(note if note else "Connected — watching Hoppie traffic from any aircraft")
         self._reload_messages()
@@ -518,6 +626,7 @@ class AcarsBridgeApp(QMainWindow):
         self.tap.stop()
         self._sync_connection_buttons(running=False)
         self._set_link_state("off")
+        self._update_tray_tooltip()
         self._flash("Disconnected · Hoppie DNS restored.")
         self._reload_messages()
 
@@ -545,6 +654,7 @@ class AcarsBridgeApp(QMainWindow):
             self._set_link_state("err", status.last_check)
         elif status.last_check:
             self._set_link_state("ok", status.last_check)
+        self._update_tray_tooltip()
 
         new_count = int(stats.get("printed", 0)) + int(stats.get("stored", 0))
         user_check = self._user_check_pending
@@ -627,6 +737,10 @@ class AcarsBridgeApp(QMainWindow):
         self.session.settings.set_paper_width(str(width_value))
         self.session.settings.set_cut_enabled(w["cut"].currentText() == "on")
         self.session.settings.set_auto_print(w["auto_print"].currentText() == "on")
+        self.session.settings.set_auto_connect(w["auto_connect"].currentText() == "on")
+        self.session.settings.set_check_updates(
+            w["check_updates"].currentText() == "on"
+        )
         scale_value = {"85%": 0.85, "100%": 1.0, "115%": 1.15, "125%": 1.25}.get(
             w["ui_scale"].currentText(), 1.0
         )
@@ -752,12 +866,47 @@ class AcarsBridgeApp(QMainWindow):
         }
 
     def closeEvent(self, event) -> None:  # noqa: N802 - Qt API
+        # Close / X → tray (keep watching Hoppie). Quit from the tray menu exits.
+        if (
+            not self._quit_requested
+            and self._tray is not None
+            and self._tray.isVisible()
+        ):
+            event.ignore()
+            self.hide()
+            if not self._tray_hint_shown:
+                self._tray_hint_shown = True
+                self._tray.showMessage(
+                    "ACARS Print Bridge",
+                    "Still running in the tray. Right-click the icon → Quit to exit.",
+                    QSystemTrayIcon.MessageIcon.Information,
+                    4000,
+                )
+            return
         self._closing = True
         self.debug.info("app_closing", **self._debug_context())
         self._clock_timer.stop()
+        if self._tray is not None:
+            self._tray.hide()
         self.tap.stop()
         self.session.close()
         super().closeEvent(event)
+
+    def changeEvent(self, event) -> None:  # noqa: N802 - Qt API
+        # Minimize also parks in the tray when available.
+        from PySide6.QtCore import QEvent
+
+        if (
+            event.type() == QEvent.Type.WindowStateChange
+            and self.isMinimized()
+            and self._tray is not None
+            and self._tray.isVisible()
+            and not self._quit_requested
+        ):
+            event.accept()
+            QTimer.singleShot(0, self.hide)
+            return
+        super().changeEvent(event)
 
 
 def run_app(paths: AppPaths | None = None) -> None:
@@ -787,6 +936,7 @@ def run_app(paths: AppPaths | None = None) -> None:
 
     session = build_session(resolved)
     apply_theme(app, ui_scale=session.settings.ui_scale())
+    app.setWindowIcon(make_app_icon())
     window = AcarsBridgeApp(session)
     window.show()
     try:

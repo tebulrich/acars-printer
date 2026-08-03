@@ -29,20 +29,21 @@ def _msg(**kwargs) -> StoredMessage:
     return StoredMessage(**base)
 
 
-def test_80mm_layout():
+def test_80mm_cpdlc_looks_like_uplink_strip():
     out = ThermalMessageFormatter().format(
         _msg(),
         PrinterSettings("console", paper_width="80"),
         now=datetime(2026, 8, 2, 14, 32, tzinfo=UTC),
     )
-    assert "ACARS PRINT BRIDGE" not in out
-    assert "02 AUG 2026  1432Z" in out
-    assert "FLT  SWR14" in out
+    assert out.splitlines()[0] == "1432Z"
     assert "FROM LSAS_CTR" in out
-    assert "TYPE:" not in out
-    assert "MSG ID:" not in out
     assert "CLIMB TO AND MAINTAIN FL360" in out
-    assert len(out.splitlines()[0]) == 42
+    assert "FLT" not in out
+    assert "REQ" not in out
+    assert "ACARS PRINT BRIDGE" not in out
+    assert "TYPE:" not in out
+    assert "-----" not in out
+    assert PrinterSettings("console", paper_width="80").characters_per_line() == 48
 
 
 def test_58mm_width_and_token_wrap():
@@ -53,29 +54,40 @@ def test_58mm_width_and_token_wrap():
         ),
         PrinterSettings("console", paper_width="58"),
     )
-    assert len(out.splitlines()[0]) == 32
+    assert PrinterSettings("console", paper_width="58").characters_per_line() == 32
     assert "N850" in out
     assert "N85\n0" not in out
 
 
-def test_inforeq_shows_request_station():
+def test_inforeq_prints_atis_body_not_hoppie_request():
+    """Real D-ATIS strips are the uplink text — not REQ VATATIS EDDH_D."""
     out = ThermalMessageFormatter().format(
         _msg(
             callsign="DLH9911",
             sender="acars",
             message_type="inforeq",
-            normalized_body="VATATIS EDDF\nTHIS ATIS IS NOT\nAVAILABLE",
+            normalized_body=(
+                "VATATIS EDDH_D\n"
+                "EDDH DEP ATIS H\n"
+                "1400Z\n"
+                "RWY 23 IN USE\n"
+                "WIND 240 DEG 8 KT\n"
+                "QNH 1015"
+            ),
             min=None,
             ra=None,
         ),
         PrinterSettings("console", paper_width="80"),
         now=datetime(2026, 8, 2, 18, 14, tzinfo=UTC),
     )
-    assert "FLT  DLH9911" in out
-    assert "REQ  VATATIS EDDF" in out
+    assert out.splitlines()[0] == "1814Z"
+    assert "VATATIS" not in out
+    assert "REQ" not in out
+    assert "FLT" not in out
     assert "FROM acars" not in out
-    assert "THIS ATIS IS NOT" in out
-    assert "AVAILABLE" in out
+    assert "EDDH DEP ATIS H" in out
+    assert "RWY 23 IN USE" in out
+    assert "QNH 1015" in out
 
 
 def test_inforeq_without_packet_keeps_full_body():
@@ -89,8 +101,9 @@ def test_inforeq_without_packet_keeps_full_body():
             ra=None,
         ),
         PrinterSettings("console", paper_width="80"),
+        now=datetime(2026, 8, 2, 18, 14, tzinfo=UTC),
     )
-    assert "REQ  THIS ATIS IS NOT" not in out
-    assert "FROM acars" in out
+    assert "REQ" not in out
+    assert "FROM acars" not in out
     assert "THIS ATIS IS NOT" in out
     assert "AVAILABLE" in out
