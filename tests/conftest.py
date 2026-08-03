@@ -41,5 +41,7 @@ def app_session(tmp_path: Path):
     session.settings.set_callsign("SWR14")
     session.settings.set_hoppie_logon("secret-logon-code")
     session.settings.set_printer_destination("fake")
+    # Keep unit tests fast — production uses the 1s auto-print delay.
+    session.ingestion._print_delay_seconds = 0.0
     yield session
     session.close()

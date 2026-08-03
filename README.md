@@ -1,12 +1,16 @@
 # ACARS Print Bridge
 
-Windows app that sits beside a Hoppie ACARS aircraft client and prints what the
-plane receives (CPDLC, telex, weather / ATIS, and similar) on a local thermal or
-Windows printer.
+Printer bridge for Hoppie ACARS — not an aircraft ACARS client and not a
+Hoppie station.
 
-It does not open its own Hoppie station session. On Connect it intercepts
-traffic to `www.hoppie.nl`, forwards each request to the real server, and
-prints from the replies. Disconnect restores normal DNS / routing.
+It sits beside your aircraft’s own Hoppie ACARS (in the sim) and prints what
+that plane receives (CPDLC, telex, weather / ATIS, and similar) on a local
+thermal or Windows printer.
+
+It does not open its own Hoppie station session and does not send ACARS
+messages. On Connect it intercepts traffic to `www.hoppie.nl`, forwards each
+request to the real server, and prints from the replies. Disconnect restores
+normal DNS / routing.
 
 ## Compatibility
 
@@ -71,8 +75,8 @@ Open the **Settings** tab:
 Click **Save settings**.
 
 Also put the **same logon** and your **flight callsign** in the aircraft ACARS
-pages. The plane must actually send Hoppie requests; this app only watches and
-prints.
+pages. The plane’s ACARS client must send the Hoppie requests; this app only
+watches and prints.
 
 ### 5. Connect, then use the plane
 

@@ -5,7 +5,7 @@ from collections.abc import Callable
 
 from acars_bridge.hoppie.atis_text import atis_reply_unavailable, vatatis_airport_key
 from acars_bridge.hoppie.types import HoppieMessage
-from acars_bridge.models.messages import MessageRepository
+from acars_bridge.models.messages import MessageRepository, StoredMessage
 from acars_bridge.models.settings import SettingsStore
 from acars_bridge.printing.base import PrinterSettings
 from acars_bridge.services.fingerprint import fingerprint_for
@@ -13,6 +13,8 @@ from acars_bridge.services.print_manager import PrintManager
 
 # Plane clients often try ICAO_D then plain ICAO within a couple seconds.
 _UNAVAILABLE_COOLDOWN_SEC = 120.0
+# Brief pause after a message is stored so the strip feels like a real MU print.
+AUTO_PRINT_DELAY_SECONDS = 1.0
 
 
 class MessageIngestionService:
@@ -21,10 +23,13 @@ class MessageIngestionService:
         repo: MessageRepository,
         settings: SettingsStore,
         print_manager: PrintManager,
+        *,
+        print_delay_seconds: float = AUTO_PRINT_DELAY_SECONDS,
     ) -> None:
         self._repo = repo
         self._settings = settings
         self._print_manager = print_manager
+        self._print_delay_seconds = max(0.0, float(print_delay_seconds))
         self._recent_unavailable: dict[tuple[str, str], float] = {}
 
     def ingest(
@@ -57,7 +62,7 @@ class MessageIngestionService:
                 if force_print and wants_print and not unavailable:
                     existing = self._repo.get_by_fingerprint(fp)
                     if existing is not None:
-                        result = self._print_manager.print_message(
+                        result = self._print_after_delay(
                             existing, printer_settings, is_reprint=True
                         )
                         if result == "printed":
@@ -70,12 +75,25 @@ class MessageIngestionService:
                 stats["stored"] += 1
                 continue
 
-            result = self._print_manager.print_message(stored, printer_settings)
+            result = self._print_after_delay(stored, printer_settings)
             if result == "printed":
                 stats["printed"] += 1
             else:
                 stats["failed_prints"] += 1
         return stats
+
+    def _print_after_delay(
+        self,
+        message: StoredMessage,
+        printer_settings: PrinterSettings,
+        *,
+        is_reprint: bool = False,
+    ) -> str:
+        if self._print_delay_seconds > 0:
+            time.sleep(self._print_delay_seconds)
+        return self._print_manager.print_message(
+            message, printer_settings, is_reprint=is_reprint
+        )
 
     def ingest_from_fetch(
         self,
