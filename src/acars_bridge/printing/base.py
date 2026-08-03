@@ -12,6 +12,7 @@ class PrinterSettings:
     paper_width: str = "80"
     cut_enabled: bool = True
     character_width_override: int | None = None
+    aircraft_registration: str | None = None
 
     def characters_per_line(self) -> int:
         if self.character_width_override:

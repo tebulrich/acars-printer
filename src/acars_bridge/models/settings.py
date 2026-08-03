@@ -68,6 +68,14 @@ class SettingsStore:
     def set_callsign(self, callsign: str) -> None:
         self.set("callsign", callsign.strip().upper())
 
+    def aircraft_registration(self) -> str | None:
+        """Tail number for ACARS hardcopy header (e.g. D-AIXX)."""
+        value = self.get("aircraft_registration")
+        return value.upper() if value else None
+
+    def set_aircraft_registration(self, registration: str) -> None:
+        self.set("aircraft_registration", registration.strip().upper())
+
     def mode(self) -> ClientMode:
         # Print-bridge is Observer-only (peek beside the aircraft client).
         return ClientMode.OBSERVER

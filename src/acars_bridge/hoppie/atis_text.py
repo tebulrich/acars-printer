@@ -46,3 +46,26 @@ def inforeq_request_label(body: str) -> str | None:
     if not sep or not label or not _REQ_LINE_RE.match(label):
         return None
     return label.upper()
+
+
+def inforeq_station_title(label: str) -> str | None:
+    """Human station line for prints: ``VATATIS EDDH_D`` → ``EDDH DEP ATIS``."""
+    parts = (label or "").upper().split()
+    if not parts:
+        return None
+    kind = parts[0]
+    station = parts[1] if len(parts) > 1 else ""
+    icao, _, suffix = station.partition("_")
+    icao = icao.strip()
+    suffix = suffix.strip()
+    if kind in {"VATATIS", "ATIS"}:
+        if not icao:
+            return "ATIS"
+        if suffix == "D":
+            return f"{icao} DEP ATIS"
+        if suffix == "A":
+            return f"{icao} ARR ATIS"
+        return f"{icao} ATIS"
+    if kind in {"METAR", "TAF", "SHORTTAF", "SHORTFAF"}:
+        return f"{kind} {icao}".strip() if icao else kind
+    return label.strip().upper() or None

@@ -41,6 +41,7 @@ class MessageIngestionService:
             destination=self._settings.printer_destination(),
             paper_width=self._settings.paper_width(),
             cut_enabled=self._settings.cut_enabled(),
+            aircraft_registration=self._settings.aircraft_registration(),
         )
 
         for message in messages:

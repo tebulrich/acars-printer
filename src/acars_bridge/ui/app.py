@@ -265,6 +265,9 @@ class AcarsBridgeApp(QMainWindow):
         callsign = QLineEdit(self.session.settings.callsign() or "")
         callsign.setPlaceholderText("optional — only print this flight")
 
+        registration = QLineEdit(self.session.settings.aircraft_registration() or "")
+        registration.setPlaceholderText("optional tail — omit REG if empty")
+
         logon = QLineEdit()
         logon.setEchoMode(QLineEdit.EchoMode.Password)
         logon.setPlaceholderText(
@@ -318,6 +321,7 @@ class AcarsBridgeApp(QMainWindow):
 
         self._settings_widgets = {
             "callsign": callsign,
+            "registration": registration,
             "logon": logon,
             "printer": printer,
             "width": width,
@@ -329,6 +333,7 @@ class AcarsBridgeApp(QMainWindow):
         }
 
         form.addRow("Callsign filter", callsign)
+        form.addRow("Aircraft registration", registration)
         form.addRow("Hoppie logon", logon)
         form.addRow("Printer", printer)
         form.addRow("Paper width", width)
@@ -700,30 +705,31 @@ class AcarsBridgeApp(QMainWindow):
         msg = self.session.messages.get(self._selected_id)
         if not msg:
             return
-        settings = PrinterSettings(
-            destination=self.session.settings.printer_destination(),
-            paper_width=self.session.settings.paper_width(),
-            cut_enabled=self.session.settings.cut_enabled(),
-        )
+        settings = self._printer_settings()
         result = self.session.print_manager.print_message(msg, settings, is_reprint=True)
         ok = result == "printed"
         self._flash("Printed." if ok else "Print failed.", error=not ok)
 
     def _test_print(self) -> None:
-        settings = PrinterSettings(
-            destination=self.session.settings.printer_destination(),
-            paper_width=self.session.settings.paper_width(),
-            cut_enabled=self.session.settings.cut_enabled(),
-        )
+        settings = self._printer_settings()
         try:
             self.session.print_manager.test_print(settings)
             self._flash(f"Test print → {settings.destination}")
         except Exception as exc:  # noqa: BLE001
             self._flash(f"Test print failed: {exc}", error=True)
 
+    def _printer_settings(self) -> PrinterSettings:
+        return PrinterSettings(
+            destination=self.session.settings.printer_destination(),
+            paper_width=self.session.settings.paper_width(),
+            cut_enabled=self.session.settings.cut_enabled(),
+            aircraft_registration=self.session.settings.aircraft_registration(),
+        )
+
     def _save_settings(self) -> None:
         w = self._settings_widgets
         self.session.settings.set_callsign(w["callsign"].text().strip())
+        self.session.settings.set_aircraft_registration(w["registration"].text().strip())
         logon_value = w["logon"].text().strip()
         if logon_value:
             self.session.settings.set_hoppie_logon(logon_value)

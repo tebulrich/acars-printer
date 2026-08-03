@@ -67,19 +67,31 @@ class EscPosMessagePrinter:
 
     def _render(self, printer: object, formatted_body: str, settings: PrinterSettings) -> None:
         self._prepare_page(printer)
+        # After a cut/tear the head sits on the paper edge — without a short
+        # lead-in the first line (time) loses a few pixels at the top.
+        self._lead_in(printer)
         body = formatted_body if formatted_body.endswith("\n") else formatted_body + "\n"
         printer.text(body)  # type: ignore[attr-defined]
         if settings.cut_enabled:
             self._tear_or_cut(printer)
 
     @staticmethod
-    def _prepare_page(printer: object) -> None:
-        """Full-width Font A, closer to cockpit printer scale.
+    def _lead_in(printer: object) -> None:
+        try:
+            printer.print_and_feed(3)  # type: ignore[attr-defined]
+            return
+        except Exception:
+            pass
+        try:
+            printer.text("\n\n\n")  # type: ignore[attr-defined]
+        except Exception:
+            pass
 
-        Real PTA-45B-class printers run about 7 lines/inch on ~4.4\" paper.
-        POS-80 Font A at 1x height is denser/smaller on 80 mm stock, so use
-        double-height (not double-width) to keep 48 columns while matching the
-        taller glyph look of a flight-deck strip.
+    @staticmethod
+    def _prepare_page(printer: object) -> None:
+        """Full-width Font A at normal scale (bold for thermal punch).
+
+        Double-height on POS-80 looks stretched, not like a cockpit printer.
         """
         try:
             printer.set(  # type: ignore[attr-defined]
@@ -87,12 +99,13 @@ class EscPosMessagePrinter:
                 font="a",
                 bold=True,
                 double_width=False,
-                double_height=True,
+                double_height=False,
+                normal_textsize=True,
                 density=8,
             )
         except Exception:
             try:
-                printer.set(align="left", font="a", double_height=True)  # type: ignore[attr-defined]
+                printer.set(align="left", font="a", bold=True)  # type: ignore[attr-defined]
             except Exception:
                 pass
         for attr, args in (

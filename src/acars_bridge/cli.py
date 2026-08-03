@@ -162,6 +162,7 @@ def test_print(
             destination=destination or session.settings.printer_destination(),
             paper_width=width or session.settings.paper_width(),
             cut_enabled=session.settings.cut_enabled(),
+            aircraft_registration=session.settings.aircraft_registration(),
         )
         from acars_bridge.printing.discovery import is_device_printer_destination
 
