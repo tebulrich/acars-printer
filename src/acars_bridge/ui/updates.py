@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from PySide6.QtCore import QObject, QThread, Signal, Slot
+from PySide6.QtCore import QObject, Qt, QThread, Signal, Slot
 from PySide6.QtGui import QDesktopServices
 from PySide6.QtWidgets import (
     QDialog,
@@ -178,31 +178,51 @@ class UpdateController(QObject):
         self._session = session
         self._dialog: UpdateDialog | None = None
         self._check_thread: QThread | None = None
+        self._check_worker: UpdateCheckWorker | None = None
         self._download_thread: QThread | None = None
+        self._download_worker: UpdateDownloadWorker | None = None
         self._manual = False
 
     def check(self, *, manual: bool = False) -> None:
         if self._check_thread is not None and self._check_thread.isRunning():
+            if manual:
+                self._notify("Already checking for updates…")
             return
         self._manual = manual
+        if manual:
+            self._notify("Checking for updates…")
+
+        # Manual checks ignore "skip this version"; auto-check honors it.
         skipped = None if manual else self._session.settings.skipped_update_version()
         thread = QThread(self)
         worker = UpdateCheckWorker(skipped_version=skipped)
+        # Keep a Python reference — otherwise GC can collect the worker before run().
+        self._check_thread = thread
+        self._check_worker = worker
         worker.moveToThread(thread)
         thread.started.connect(worker.run)
-        worker.finished.connect(self._on_check_finished)
-        worker.failed.connect(self._on_check_failed)
+        worker.finished.connect(
+            self._on_check_finished, Qt.ConnectionType.QueuedConnection
+        )
+        worker.failed.connect(
+            self._on_check_failed, Qt.ConnectionType.QueuedConnection
+        )
         worker.finished.connect(thread.quit)
         worker.failed.connect(thread.quit)
         thread.finished.connect(worker.deleteLater)
         thread.finished.connect(thread.deleteLater)
         thread.finished.connect(self._clear_check_thread)
-        self._check_thread = thread
         thread.start()
+
+    def _notify(self, text: str, *, error: bool = False) -> None:
+        flash = getattr(self._window, "_flash", None)
+        if callable(flash):
+            flash(text, error=error)
 
     @Slot()
     def _clear_check_thread(self) -> None:
         self._check_thread = None
+        self._check_worker = None
 
     @Slot(object)
     def _on_check_finished(self, release: object) -> None:
@@ -218,8 +238,11 @@ class UpdateController(QObject):
 
     @Slot(str)
     def _on_check_failed(self, message: str) -> None:
+        # Always surface failures — silent auto-check made it look broken.
         if self._manual:
             QMessageBox.warning(self._window, "Update check failed", message)
+        else:
+            self._notify(f"Update check failed: {message}", error=True)
 
     def _show_dialog(self, release: ReleaseInfo) -> None:
         if self._dialog is not None and self._dialog.isVisible():
@@ -245,22 +268,30 @@ class UpdateController(QObject):
         self._dialog.set_busy(True, "Downloading…")
         thread = QThread(self)
         worker = UpdateDownloadWorker(release, dest)
+        self._download_thread = thread
+        self._download_worker = worker
         worker.moveToThread(thread)
         thread.started.connect(worker.run)
-        worker.progress.connect(self._on_download_progress)
-        worker.finished.connect(self._on_download_finished)
-        worker.failed.connect(self._on_download_failed)
+        worker.progress.connect(
+            self._on_download_progress, Qt.ConnectionType.QueuedConnection
+        )
+        worker.finished.connect(
+            self._on_download_finished, Qt.ConnectionType.QueuedConnection
+        )
+        worker.failed.connect(
+            self._on_download_failed, Qt.ConnectionType.QueuedConnection
+        )
         worker.finished.connect(thread.quit)
         worker.failed.connect(thread.quit)
         thread.finished.connect(worker.deleteLater)
         thread.finished.connect(thread.deleteLater)
         thread.finished.connect(self._clear_download_thread)
-        self._download_thread = thread
         thread.start()
 
     @Slot()
     def _clear_download_thread(self) -> None:
         self._download_thread = None
+        self._download_worker = None
 
     @Slot(int, int)
     def _on_download_progress(self, done: int, total: int) -> None:

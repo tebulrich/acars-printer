@@ -923,7 +923,10 @@ def run_app(paths: AppPaths | None = None) -> None:
 
     resolved = paths or AppPaths.default()
     lock = QLockFile(str(resolved.root / "app.lock"))
-    lock.setStaleLockTime(0)
+    # Allow Qt to drop locks left by crashed/force-killed processes (PID gone).
+    # setStaleLockTime(0) disables that and strands app.lock forever.
+    lock.setStaleLockTime(5_000)
+    lock.removeStaleLockFile()
     if not lock.tryLock(100):
         # Second launch (common with UAC) — keep the first instance only.
         app = QApplication.instance() or QApplication(sys.argv)
@@ -931,7 +934,7 @@ def run_app(paths: AppPaths | None = None) -> None:
             None,
             "ACARS Print Bridge",
             "ACARS Print Bridge is already running.\n"
-            "Close the other window (or end it in Task Manager) and try again.",
+            "Check the system tray, or end it in Task Manager, then try again.",
         )
         return
 
