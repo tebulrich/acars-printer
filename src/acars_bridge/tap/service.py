@@ -117,7 +117,6 @@ class TapService:
         self._hosts_owned = True
         _flush_dns()
         fill_from = (self._session.settings.callsign() or "").strip().upper() or None
-        fill_logon = (self._session.settings.hoppie_logon() or "").strip() or None
         proxy = HoppieForwardProxy(
             ProxyConfig(
                 upstream_host=UPSTREAM_HOST,
@@ -126,7 +125,6 @@ class TapService:
                 server_key=server_key,
                 enable_https=True,
                 fill_from_callsign=fill_from,
-                fill_logon=fill_logon,
             ),
             on_exchange=self._on_exchange,
             on_debug=self._on_debug,

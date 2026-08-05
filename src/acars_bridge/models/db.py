@@ -48,7 +48,7 @@ class Database:
         self.path = path
         self.path.parent.mkdir(parents=True, exist_ok=True)
         self._lock = threading.RLock()
-        # Background poller + UI share this connection; serialize via _lock.
+        # UI / background workers share this connection; serialize via _lock.
         self._conn = sqlite3.connect(self.path, check_same_thread=False)
         self._conn.row_factory = sqlite3.Row
         self._conn.execute("PRAGMA foreign_keys = ON")

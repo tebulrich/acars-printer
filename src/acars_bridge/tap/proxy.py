@@ -28,8 +28,6 @@ class ProxyConfig:
     enable_https: bool = True
     # When the aircraft sends from= empty, fill this callsign before Hoppie sees it.
     fill_from_callsign: str | None = None
-    # Always use this Hoppie logon code on connect.html (plane may send a junk value).
-    fill_logon: str | None = None
 
 
 class HoppieForwardProxy:
@@ -151,7 +149,6 @@ class HoppieForwardProxy:
                     body,
                     fill_from=(self._config.fill_from_callsign or "").strip().upper()
                     or None,
-                    force_logon=(self._config.fill_logon or "").strip() or None,
                 )
                 if notes:
                     form = _form_from_http(head, body)
@@ -309,11 +306,10 @@ def _patch_hoppie_credentials(
     body: bytes,
     *,
     fill_from: str | None,
-    force_logon: str | None,
 ) -> tuple[bytes, bytes, list[str]]:
-    """Fix empty from= and/or replace logon= with the stored Hoppie code."""
+    """Fill empty from= with the configured callsign filter when set."""
     notes: list[str] = []
-    if not fill_from and not force_logon:
+    if not fill_from:
         return head, body, notes
 
     headers = head.decode("iso-8859-1", errors="replace")
@@ -330,9 +326,7 @@ def _patch_hoppie_credentials(
     changed_any = False
     if len(parts) >= 2 and "?" in parts[1]:
         path, _, query = parts[1].partition("?")
-        new_query, q_notes = _form_patch_fields(
-            query, fill_from=fill_from, force_logon=force_logon
-        )
+        new_query, q_notes = _form_patch_fields(query, fill_from=fill_from)
         if q_notes:
             parts[1] = f"{path}?{new_query}"
             lines[0] = " ".join(parts)
@@ -343,9 +337,7 @@ def _patch_hoppie_credentials(
     if body:
         body_text = body.decode("utf-8", errors="replace")
         if "=" in body_text:
-            new_text, b_notes = _form_patch_fields(
-                body_text, fill_from=fill_from, force_logon=force_logon
-            )
+            new_text, b_notes = _form_patch_fields(body_text, fill_from=fill_from)
             if b_notes:
                 new_body = new_text.encode("utf-8")
                 for note in b_notes:
@@ -371,13 +363,11 @@ def _form_patch_fields(
     urlencoded: str,
     *,
     fill_from: str | None,
-    force_logon: str | None,
 ) -> tuple[str, list[str]]:
     pairs = parse_qsl(urlencoded, keep_blank_values=True)
     if not pairs and not urlencoded:
         return urlencoded, []
     notes: list[str] = []
-    by_lower = {k.lower(): v for k, v in pairs}
     out: list[tuple[str, str]] = []
     seen: set[str] = set()
 
@@ -387,31 +377,21 @@ def _form_patch_fields(
         if key_l == "from" and fill_from and not value.strip():
             out.append((key, fill_from))
             notes.append(f"from={fill_from}")
-        elif key_l == "logon" and force_logon and value != force_logon:
-            out.append((key, force_logon))
-            notes.append("logon=<stored>")
         else:
             out.append((key, value))
 
     if fill_from and "from" not in seen:
         out.append(("from", fill_from))
         notes.append(f"from={fill_from}")
-    if force_logon and "logon" not in seen:
-        out.append(("logon", force_logon))
-        notes.append("logon=<stored>")
 
     if not notes:
         return urlencoded, []
-    # by_lower kept for clarity / future checks
-    del by_lower
     return urlencode(out, doseq=True), notes
 
 
 # Back-compat alias used by older tests / imports.
 def _inject_from_callsign(head: bytes, body: bytes, callsign: str) -> tuple[bytes, bytes]:
-    new_head, new_body, _notes = _patch_hoppie_credentials(
-        head, body, fill_from=callsign, force_logon=None
-    )
+    new_head, new_body, _notes = _patch_hoppie_credentials(head, body, fill_from=callsign)
     return new_head, new_body
 
 

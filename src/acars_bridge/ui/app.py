@@ -523,14 +523,6 @@ class AcarsBridgeApp(QMainWindow):
         callsign = QLineEdit(self.session.settings.callsign() or "")
         callsign.setPlaceholderText("optional — only print this flight")
 
-        logon = QLineEdit()
-        logon.setEchoMode(QLineEdit.EchoMode.Password)
-        logon.setPlaceholderText(
-            "stored — leave blank to keep"
-            if self.session.settings.hoppie_logon()
-            else "Hoppie ACARS logon code (not your Windows user)"
-        )
-
         auto_print = QComboBox()
         auto_print.addItems(["on", "off"])
         auto_print.setCurrentText("on" if self.session.settings.auto_print() else "off")
@@ -558,7 +550,6 @@ class AcarsBridgeApp(QMainWindow):
 
         self._settings_widgets = {
             "callsign": callsign,
-            "logon": logon,
             "auto_print": auto_print,
             "auto_connect": auto_connect,
             "check_updates": check_updates,
@@ -566,15 +557,14 @@ class AcarsBridgeApp(QMainWindow):
         }
 
         form.addRow("Callsign filter", callsign)
-        form.addRow("Hoppie logon", logon)
         form.addRow("Auto-print", auto_print)
         form.addRow("Auto-connect", auto_connect)
         form.addRow("Check for updates", check_updates)
         form.addRow("UI scale", ui_scale)
 
         help_lbl = QLabel(
-            "Hoppie logon is the secret ACARS code from hoppie.nl (not a Windows "
-            "username). Printer and strip layout live on the Format tab. Connect as "
+            "The aircraft ACARS logon is used as-is (nothing to enter here). "
+            "Printer and strip layout live on the Format tab. Connect as "
             "Administrator to intercept; Disconnect restores normal Hoppie access."
         )
         help_lbl.setObjectName("Muted")
@@ -1082,11 +1072,6 @@ class AcarsBridgeApp(QMainWindow):
     def _save_settings(self) -> None:
         w = self._settings_widgets
         self.session.settings.set_callsign(w["callsign"].text().strip())
-        logon_value = w["logon"].text().strip()
-        if logon_value:
-            self.session.settings.set_hoppie_logon(logon_value)
-            w["logon"].clear()
-            w["logon"].setPlaceholderText("stored — leave blank to keep")
         self.session.settings.set_auto_print(w["auto_print"].currentText() == "on")
         self.session.settings.set_auto_connect(w["auto_connect"].currentText() == "on")
         self.session.settings.set_check_updates(

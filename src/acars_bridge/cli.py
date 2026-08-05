@@ -1,21 +1,16 @@
 from __future__ import annotations
 
-import random
-import time
 from pathlib import Path
 
 import typer
 
 from acars_bridge import __version__
-from acars_bridge.config import JITTER_SECONDS, AppPaths
-from acars_bridge.hoppie.errors import CallsignInUseError, HoppieError
-from acars_bridge.redaction import mask_logon
-from acars_bridge.services.backoff import delay_seconds
+from acars_bridge.config import AppPaths
 from acars_bridge.services.session import build_session
 
 app = typer.Typer(
     name="acars-bridge",
-    help="Hoppie ACARS print bridge (Observer peek + thermal print).",
+    help="Hoppie ACARS print bridge (local tap + thermal print).",
     no_args_is_help=True,
 )
 
@@ -46,8 +41,7 @@ def ui(data_dir: str | None = typer.Option(None, hidden=True)) -> None:
 
 @app.command()
 def configure(
-    callsign: str | None = typer.Option(None, help="Flight callsign"),
-    logon: str | None = typer.Option(None, help="Hoppie logon (stored encrypted)"),
+    callsign: str | None = typer.Option(None, help="Optional callsign print filter"),
     printer: str | None = typer.Option(
         None, help="console | cups://Name | win32://Name | file:// | tcp://"
     ),
@@ -55,13 +49,11 @@ def configure(
     auto_print: bool | None = typer.Option(None, help="Enable automatic printing"),
     data_dir: str | None = typer.Option(None, hidden=True),
 ) -> None:
-    """Store local settings. Logon is encrypted at rest."""
+    """Store local settings (printer / filter). Logon comes from the aircraft."""
     session = _session(data_dir)
     try:
         if callsign:
             session.settings.set_callsign(callsign)
-        if logon:
-            session.settings.set_hoppie_logon(logon)
         if printer:
             session.settings.set_printer_destination(printer)
         if width:
@@ -70,9 +62,7 @@ def configure(
             session.settings.set_auto_print(auto_print)
 
         typer.echo("Settings saved.")
-        typer.echo(f"Callsign: {session.settings.callsign() or '(unset)'}")
-        typer.echo(f"Logon: {mask_logon(session.settings.hoppie_logon())}")
-        typer.echo("Mode: observer")
+        typer.echo(f"Callsign filter: {session.settings.callsign() or '(unset)'}")
         typer.echo(f"Printer: {session.settings.printer_destination()}")
         typer.echo(f"Width: {session.settings.paper_width()}mm")
         typer.echo(f"Auto-print: {'yes' if session.settings.auto_print() else 'no'}")
@@ -83,67 +73,14 @@ def configure(
 
 @app.command("status")
 def status_cmd(data_dir: str | None = typer.Option(None, hidden=True)) -> None:
-    """Show current session configuration (secrets masked)."""
+    """Show current session configuration."""
     session = _session(data_dir)
     try:
         typer.echo(f"acars-bridge {__version__}")
-        typer.echo("Mode: observer")
-        typer.echo(f"Callsign: {session.settings.callsign() or '(unset)'}")
-        typer.echo(f"Logon: {mask_logon(session.settings.hoppie_logon())}")
+        typer.echo("Mode: tap")
+        typer.echo(f"Callsign filter: {session.settings.callsign() or '(unset)'}")
         typer.echo(f"Printer: {session.settings.printer_destination()}")
-        typer.echo(f"Peek interval: {session.settings.poll_interval()}s")
         typer.echo(f"Data: {session.paths.root}")
-    finally:
-        session.close()
-
-
-def _run_observe(session, *, once: bool, loop: bool) -> None:
-    logon = session.settings.hoppie_logon()
-    callsign = session.settings.callsign()
-    if not logon or not callsign:
-        raise typer.Exit("Configure --callsign and --logon first (acars-bridge configure).")
-
-    failures = 0
-    first = True
-    while first or loop:
-        first = False
-        try:
-            messages = session.observer.fetch(logon, callsign)
-            stats = session.ingestion.ingest(messages)
-            typer.echo(
-                f"observe: stored={stats['stored']} printed={stats['printed']} "
-                f"duplicates={stats['duplicates']} failed_prints={stats['failed_prints']}"
-            )
-            failures = 0
-            interval = session.settings.poll_interval()
-        except CallsignInUseError as exc:
-            typer.secho(
-                f"Callsign in use: {exc}. Use the same Hoppie logon as the aircraft client.",
-                fg=typer.colors.YELLOW,
-            )
-            raise typer.Exit(code=2) from exc
-        except HoppieError as exc:
-            failures += 1
-            typer.secho(f"Hoppie error: {exc}", fg=typer.colors.RED)
-            interval = delay_seconds(failures)
-            if once and not loop:
-                raise typer.Exit(code=1) from exc
-        if once and not loop:
-            break
-        sleep_for = interval + (0 if failures else random.randint(0, JITTER_SECONDS))
-        typer.echo(f"Sleeping {sleep_for}s...")
-        time.sleep(sleep_for)
-
-
-@app.command()
-def observe(
-    once: bool = typer.Option(True, "--once/--loop", help="One peek or continuous loop"),
-    data_dir: str | None = typer.Option(None, hidden=True),
-) -> None:
-    """Peek for queued Hoppie traffic and auto-print (non-destructive)."""
-    session = _session(data_dir)
-    try:
-        _run_observe(session, once=once, loop=not once)
     finally:
         session.close()
 

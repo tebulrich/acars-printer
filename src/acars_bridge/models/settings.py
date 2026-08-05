@@ -78,7 +78,7 @@ class SettingsStore:
         self.set("aircraft_registration", cleaned or None)
 
     def mode(self) -> ClientMode:
-        # Print-bridge is Observer-only (peek beside the aircraft client).
+        # Print-bridge is tap-only; mode is always observer for stored settings.
         return ClientMode.OBSERVER
 
     def set_mode(self, mode: ClientMode) -> None:

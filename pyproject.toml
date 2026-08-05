@@ -1,6 +1,6 @@
 [project]
 name = "acars-bridge"
-version = "0.2.3"
+version = "0.3.0"
 description = "Print-only Hoppie ACARS bridge for any aircraft client."
 readme = "README.md"
 authors = [

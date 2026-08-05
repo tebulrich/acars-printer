@@ -121,9 +121,9 @@ def test_inject_from_callsign_leaves_existing_from() -> None:
     assert form["from"] == "AAL123"
 
 
-def test_patch_replaces_wrong_logon_keeps_from_fill() -> None:
+def test_patch_does_not_rewrite_logon() -> None:
     head = (
-        b"GET /acars/system/connect.html?logon=wronguser&from=&to=SERVER"
+        b"GET /acars/system/connect.html?logon=plane-logon&from=&to=SERVER"
         b"&type=infoReq&packet=metar+EDDH HTTP/1.1\r\n"
         b"Host: www.hoppie.nl\r\n"
         b"\r\n"
@@ -132,10 +132,9 @@ def test_patch_replaces_wrong_logon_keeps_from_fill() -> None:
         head,
         b"",
         fill_from="DLH9911",
-        force_logon="test-only-logon",
     )
     form = _form_from_http(new_head, new_body)
     assert form["from"] == "DLH9911"
-    assert form["logon"] == "test-only-logon"
-    assert "logon=<stored>" in notes
+    assert form["logon"] == "plane-logon"
     assert any(n.startswith("from=") for n in notes)
+    assert not any("logon" in n for n in notes)
