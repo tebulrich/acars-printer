@@ -255,7 +255,7 @@ def _resolve_host(host: str) -> str:
     raise RuntimeError(f"Could not resolve {host} to a public IP.")
 
 
-def _flush_dns() -> None:
+def _flush_dns(*, timeout: float = 3.0) -> None:
     if os.name != "nt":
         return
     try:
@@ -263,7 +263,7 @@ def _flush_dns() -> None:
             ["ipconfig", "/flushdns"],
             capture_output=True,
             text=True,
-            timeout=10,
+            timeout=timeout,
             check=False,
         )
     except Exception:  # noqa: BLE001

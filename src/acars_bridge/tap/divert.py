@@ -54,10 +54,12 @@ class HoppieForceRedirect:
                 handle.close()
             except Exception:  # noqa: BLE001
                 pass
-        if self._thread is not None:
-            self._thread.join(timeout=2)
-            self._thread = None
-        self._handle = None
+            self._handle = None
+        thread = self._thread
+        self._thread = None
+        if thread is not None and thread.is_alive():
+            thread.join(timeout=1.5)
+            # Do not block quit forever if recv() never wakes.
 
     def _loop(self) -> None:
         try:

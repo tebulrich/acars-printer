@@ -9,7 +9,6 @@ import typer
 from acars_bridge import __version__
 from acars_bridge.config import JITTER_SECONDS, AppPaths
 from acars_bridge.hoppie.errors import CallsignInUseError, HoppieError
-from acars_bridge.printing.base import PrinterSettings
 from acars_bridge.redaction import mask_logon
 from acars_bridge.services.backoff import delay_seconds
 from acars_bridge.services.session import build_session
@@ -158,12 +157,13 @@ def test_print(
     """Send a test page to the configured printer."""
     session = _session(data_dir)
     try:
-        settings = PrinterSettings(
+        settings = session.settings.as_printer_settings(
             destination=destination or session.settings.printer_destination(),
-            paper_width=width or session.settings.paper_width(),
-            cut_enabled=session.settings.cut_enabled(),
-            aircraft_registration=session.settings.aircraft_registration(),
         )
+        if width:
+            from dataclasses import replace
+
+            settings = replace(settings, paper_width="58" if width == "58" else "80")
         from acars_bridge.printing.discovery import is_device_printer_destination
 
         if is_device_printer_destination(settings.destination):

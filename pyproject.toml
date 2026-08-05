@@ -1,6 +1,6 @@
 [project]
 name = "acars-bridge"
-version = "0.2.2"
+version = "0.2.3"
 description = "Print-only Hoppie ACARS bridge for any aircraft client."
 readme = "README.md"
 authors = [
@@ -10,6 +10,7 @@ requires-python = ">=3.12"
 dependencies = [
     "cryptography>=50.0.0",
     "httpx>=0.28.1",
+    "pillow>=10.0.0",
     "platformdirs>=4.11.0",
     "pyside6>=6.8",
     "python-escpos>=3.1",
@@ -42,3 +43,4 @@ target-version = "py312"
 
 [tool.ruff.lint]
 select = ["E", "F", "I", "UP"]
+

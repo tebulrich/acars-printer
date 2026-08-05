@@ -31,9 +31,12 @@ def app_stylesheet() -> str:
     QMainWindow, QDialog {{
         background-color: {c["bg"]};
     }}
-    QFrame#Header, QFrame#Compose, QFrame#Panel, QFrame#Detail {{
+    QFrame#Header, QFrame#Compose, QFrame#Panel, QFrame#Detail, QFrame#SettingsFooter {{
         background-color: {c["panel"]};
         border: none;
+    }}
+    QFrame#SettingsFooter {{
+        border-top: 1px solid {c["border"]};
     }}
     QLabel#Chip {{
         background-color: {c["panel_alt"]};
@@ -101,12 +104,39 @@ def app_stylesheet() -> str:
         border: 1px solid {c["border"]};
         border-radius: 6px;
         padding: 8px 10px;
+        min-height: 36px;
         selection-background-color: {c["accent_dim"]};
         selection-color: {c["bg"]};
     }}
+    QSpinBox {{
+        padding-right: 4px;
+    }}
+    QSpinBox::up-button, QSpinBox::down-button {{
+        background-color: {c["border"]};
+        border: none;
+        width: 32px;
+        subcontrol-origin: border;
+    }}
+    QSpinBox::up-button {{
+        subcontrol-position: top right;
+        margin: 1px 1px 0 0;
+        border-top-right-radius: 5px;
+    }}
+    QSpinBox::down-button {{
+        subcontrol-position: bottom right;
+        margin: 0 1px 1px 0;
+        border-bottom-right-radius: 5px;
+    }}
+    QSpinBox::up-button:hover, QSpinBox::down-button:hover {{
+        background-color: {c["accent_dim"]};
+    }}
+    QSpinBox::up-arrow, QSpinBox::down-arrow {{
+        width: 12px;
+        height: 12px;
+    }}
     QComboBox::drop-down {{
         border: none;
-        width: 24px;
+        width: 28px;
     }}
     QComboBox QAbstractItemView {{
         background-color: {c["panel"]};
@@ -141,7 +171,7 @@ def app_stylesheet() -> str:
         border-radius: 8px;
     }}
     QListWidget::item {{
-        padding: 8px;
+        padding: 6px 8px;
     }}
     QListWidget::item:selected {{
         background: {c["border"]};

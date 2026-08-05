@@ -67,7 +67,7 @@ Open the **Settings** tab:
 | Hoppie logon | Your Hoppie ACARS logon code from step 1. Leave blank later if it already says it is stored. |
 | Printer | Your POS / Windows printer. Use **Test print** on the Messages side to confirm paper comes out. |
 | Callsign filter | Optional. Empty = print every Hoppie flight seen on this PC. Set e.g. `SWR14` to only print that callsign. |
-| Aircraft registration | Optional tail for the print header (`REG D-AIXX`). Leave empty to omit REG. |
+| Aircraft registration | Optional tail for the print header. With a value: `D-AILA ----  DLH4MC 04AUG 1809Z`. Leave empty to omit the tail and `----` (callsign + time only). |
 | Paper width / cut | Match your roll (usually 80 mm). Leave cut/tear assist on for typical POS printers. |
 | Auto-connect | On by default — Connects the tap when the app starts (still needs Administrator). |
 | Check for updates | On by default — looks for a newer GitHub release and offers one-click install of the Windows exe. |

@@ -42,12 +42,7 @@ class MessageIngestionService:
         stats = {"stored": 0, "printed": 0, "duplicates": 0, "failed_prints": 0}
         printable = self._settings.printable_types()
         do_print = self._settings.auto_print() if auto_print is None else auto_print
-        printer_settings = PrinterSettings(
-            destination=self._settings.printer_destination(),
-            paper_width=self._settings.paper_width(),
-            cut_enabled=self._settings.cut_enabled(),
-            aircraft_registration=self._settings.aircraft_registration(),
-        )
+        printer_settings = self._settings.as_printer_settings()
 
         for message in messages:
             fp = fingerprint_for(message)

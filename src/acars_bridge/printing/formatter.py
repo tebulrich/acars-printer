@@ -8,18 +8,18 @@ from acars_bridge.printing.base import PrinterSettings
 
 
 class ThermalMessageFormatter:
-    """Format uplinks like a cockpit ACARS MU hardcopy strip.
+    """Format uplinks like a real flight-deck ACARS hardcopy strip.
 
-    Layout mirrors common flight-deck printer wrappers seen on sample
-    printouts (airline/MU-specific, not an ARINC standard text):
+    Layout matched to airline MU printouts:
 
         ACARS BEGIN
-        <print date/time>  REG <registration>
-
-        <message date/time>
+        D-AILA ----  DLH4MC 04AUG 1809Z
 
         <body>
+
         ACARS END
+
+    Registration is optional (Settings). If empty, omit both the tail and ``----``.
     """
 
     def format(
@@ -29,65 +29,87 @@ class ThermalMessageFormatter:
         now: datetime | None = None,
     ) -> str:
         width = settings.characters_per_line()
-        print_at = now or datetime.now(UTC)
-        msg_at = self._message_time(message) or print_at
+        when = self._message_time(message) or now or datetime.now(UTC)
         title, body = self._title_and_body(message)
-        # Only a real tail from Settings — never the Hoppie callsign as REG.
         reg = (settings.aircraft_registration or "").strip().upper() or None
+        callsign = (message.callsign or "").strip().upper() or None
 
         lines: list[str] = [
             "ACARS BEGIN",
-            self._header_line(print_at, reg),
-            "",
-            self._stamp(msg_at),
+            self._header_line(when, reg, callsign, width),
             "",
         ]
         if title:
-            lines.append(self._wrap_join(title, width))
-        elif message.message_type != "inforeq":
-            from_station = (message.sender or message.to_station or "").strip()
-            if from_station:
-                lines.append(self._wrap_join(f"FROM {from_station.upper()}", width))
+            lines.extend(self._wrap_lines(title.upper(), width))
         for body_line in body.split("\n"):
-            lines.extend(self._wrap_lines(body_line, width))
+            lines.extend(self._wrap_lines(body_line.upper(), width))
         lines.append("")
         lines.append("ACARS END")
         lines.append("")
         return "\n".join(lines)
 
     def test_page(self, settings: PrinterSettings, now: datetime | None = None) -> str:
-        width = settings.characters_per_line()
-        now = now or datetime.now(UTC)
-        reg = (settings.aircraft_registration or "TEST").strip().upper() or "TEST"
-        ruler = "".join(str(i % 10) for i in range(1, width + 1))
-        return "\n".join(
-            [
-                "ACARS BEGIN",
-                self._header_line(now, reg),
-                "",
-                self._stamp(now),
-                "",
-                "TEST PRINT",
-                f"WIDTH {settings.paper_width}mm / {width} COLS",
-                "",
-                ruler,
-                "The quick brown fox jumps over the lazy dog 0123456789",
-                "",
-                "ACARS END",
-                "",
-            ]
+        """Demo strip matching a real airline PDC hardcopy (for format comparison).
+
+        Uses the configured aircraft registration as-is (empty = omit tail / ``----``).
+        """
+        # Fixed stamp from the reference photo so side-by-side comparison is easy.
+        when = now or datetime(2026, 8, 4, 18, 9, tzinfo=UTC)
+        demo = StoredMessage(
+            id=0,
+            fingerprint="demo",
+            direction="in",
+            callsign="DLH4MC",
+            sender="EDDF_DEL",
+            recipient="DLH4MC",
+            to_station=None,
+            message_type="telex",
+            raw_payload="DEMO",
+            normalized_body=(
+                "CLD 1807 260804 EDDF PDC 001\n"
+                "DLH4MCCLRD TO EDDM OFF 18 VIA\n"
+                "CINDY8S SQUAWK 1000 NEXT FREQ\n"
+                "122.035 ATIS G REPORT TOBT VIA\n"
+                "VATS.IM|VDGS REPORT READY ON\n"
+                "122.035 ACC TSAT"
+            ),
+            min=None,
+            mrn=None,
+            ra=None,
+            send_status=None,
+            received_at=when.isoformat(),
         )
+        return self.format(demo, settings, now=when)
 
     @staticmethod
     def _stamp(when: datetime) -> str:
-        return when.astimezone(UTC).strftime("%d %b %Y  %H%MZ").upper()
+        # Real strips: 04AUG 1805Z (no year, no space between day and month).
+        return when.astimezone(UTC).strftime("%d%b %H%MZ").upper()
 
     @classmethod
-    def _header_line(cls, when: datetime, registration: str | None) -> str:
+    def _header_line(
+        cls,
+        when: datetime,
+        registration: str | None,
+        callsign: str | None,
+        width: int,
+    ) -> str:
+        """``D-AILA ----  DLH4MC 04AUG 1809Z`` — omit tail/``----`` if no registration."""
         stamp = cls._stamp(when)
-        if registration:
-            return f"{stamp}  REG {registration}"
-        return stamp
+        if registration and callsign:
+            line = f"{registration} ----  {callsign} {stamp}"
+        elif registration:
+            # No callsign: keep stamp near the right edge like short weather strips.
+            left = f"{registration} ----"
+            gap = max(1, width - len(left) - len(stamp))
+            line = left + (" " * gap) + stamp
+        elif callsign:
+            line = f"{callsign} {stamp}"
+        else:
+            line = stamp
+        if len(line) <= width:
+            return line
+        return line[:width]
 
     @staticmethod
     def _message_time(message: StoredMessage) -> datetime | None:
@@ -139,9 +161,6 @@ class ThermalMessageFormatter:
             if icao and icao not in body.upper():
                 return title, body
         return None, body
-
-    def _wrap_join(self, line: str, width: int) -> str:
-        return "\n".join(self._wrap_lines(line, width))
 
     def _wrap_lines(self, line: str, width: int) -> list[str]:
         if line == "":

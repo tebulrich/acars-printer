@@ -66,48 +66,102 @@ class EscPosMessagePrinter:
             raise PrinterError(f"ESC/POS print failed: {exc}") from exc
 
     def _render(self, printer: object, formatted_body: str, settings: PrinterSettings) -> None:
-        self._prepare_page(printer)
+        self._prepare_page(printer, settings)
         # After a cut/tear the head sits on the paper edge — without a short
-        # lead-in the first line (time) loses a few pixels at the top.
-        self._lead_in(printer)
+        # lead-in the first line loses a few pixels at the top.
+        self._feed_lines(printer, settings.lead_in_lines)
         body = formatted_body if formatted_body.endswith("\n") else formatted_body + "\n"
-        printer.text(body)  # type: ignore[attr-defined]
+        if settings.render_mode == "bitmap":
+            self._render_bitmap(printer, body, settings)
+        else:
+            printer.text(body)  # type: ignore[attr-defined]
         if settings.cut_enabled:
-            self._tear_or_cut(printer)
+            self._tear_or_cut(printer, settings)
 
     @staticmethod
-    def _lead_in(printer: object) -> None:
+    def _render_bitmap(printer: object, body: str, settings: PrinterSettings) -> None:
+        from acars_bridge.printing.bitmap_render import render_receipt_bitmap
+
+        img = render_receipt_bitmap(
+            body,
+            paper_width=settings.paper_width,
+            glyph_px=settings.glyph_px,
+            line_gap_px=settings.line_gap_px,
+            bold=settings.bold,
+        )
         try:
-            printer.print_and_feed(3)  # type: ignore[attr-defined]
+            printer.image(img)  # type: ignore[attr-defined]
+        except TypeError:
+            # Older python-escpos: path-only — write temp PNG.
+            import tempfile
+            from pathlib import Path
+
+            with tempfile.TemporaryDirectory() as tmp:
+                path = Path(tmp) / "strip.png"
+                img.save(path)
+                printer.image(str(path))  # type: ignore[attr-defined]
+
+    @staticmethod
+    def _feed_lines(printer: object, lines: int) -> None:
+        if lines <= 0:
+            return
+        try:
+            printer.print_and_feed(lines)  # type: ignore[attr-defined]
             return
         except Exception:
             pass
         try:
-            printer.text("\n\n\n")  # type: ignore[attr-defined]
+            printer.text("\n" * lines)  # type: ignore[attr-defined]
         except Exception:
             pass
 
     @staticmethod
-    def _prepare_page(printer: object) -> None:
-        """Full-width Font A at normal scale (bold for thermal punch).
-
-        Double-height on POS-80 looks stretched, not like a cockpit printer.
-        """
-        try:
-            printer.set(  # type: ignore[attr-defined]
-                align="left",
-                font="a",
-                bold=True,
-                double_width=False,
-                double_height=False,
-                normal_textsize=True,
-                density=8,
-            )
-        except Exception:
+    def _prepare_page(printer: object, settings: PrinterSettings) -> None:
+        """Apply Settings print style (font / size / bold / spacing)."""
+        if settings.render_mode == "bitmap":
+            # Image path — still reset alignment / margins.
             try:
-                printer.set(align="left", font="a", bold=True)  # type: ignore[attr-defined]
+                printer.set(align="left", density=8)  # type: ignore[attr-defined]
             except Exception:
                 pass
+        else:
+            font = "b" if settings.font == "b" else "a"
+            width = max(1, min(8, int(settings.char_width)))
+            height = max(1, min(8, int(settings.char_height)))
+            try:
+                printer.set(  # type: ignore[attr-defined]
+                    align="left",
+                    font=font,
+                    bold=settings.bold,
+                    custom_size=True,
+                    width=width,
+                    height=height,
+                    density=8,
+                )
+            except Exception:
+                try:
+                    printer.set(  # type: ignore[attr-defined]
+                        align="left",
+                        font=font,
+                        bold=settings.bold,
+                        double_width=width >= 2,
+                        double_height=height >= 2,
+                        normal_textsize=width == 1 and height == 1,
+                    )
+                except Exception:
+                    pass
+
+            dots = settings.line_spacing_dots
+            spacing_fn = getattr(printer, "line_spacing", None)
+            if callable(spacing_fn):
+                try:
+                    if dots is None:
+                        spacing_fn()
+                    else:
+                        spacing_fn(dots)
+                except Exception:
+                    pass
+
         for attr, args in (
             ("set_left_margin", (0,)),
             ("left_margin", (0,)),
@@ -120,8 +174,7 @@ class EscPosMessagePrinter:
                 except Exception:
                     continue
 
-
-    def _tear_or_cut(self, printer: object) -> None:
+    def _tear_or_cut(self, printer: object, settings: PrinterSettings) -> None:
         """Advance to the tear bar, then partial-cut when the mechanism exists.
 
         Cheap POS-80 units often have only a serrated tear edge (or a partial
@@ -134,15 +187,7 @@ class EscPosMessagePrinter:
             return
         except Exception:
             pass
-        try:
-            printer.print_and_feed(6)  # type: ignore[attr-defined]
-            return
-        except Exception:
-            pass
-        try:
-            printer.text("\n\n\n\n\n\n")  # type: ignore[attr-defined]
-        except Exception:
-            pass
+        self._feed_lines(printer, settings.tear_feed_lines)
 
     def _print_via_cups_text(self, printer_name: str, formatted_body: str) -> None:
         """Submit plain text so the CUPS driver (laser/inkjet/MFP) can render it."""

@@ -109,7 +109,7 @@ class UpdateDialog(QDialog):
         layout.addWidget(self.status)
 
         row = QHBoxLayout()
-        self.btn_update = QPushButton("Download & install")
+        self.btn_update = QPushButton("Download and install")
         self.btn_update.setObjectName("Primary")
         self.btn_later = QPushButton("Later")
         self.btn_skip = QPushButton("Skip this version")

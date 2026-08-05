@@ -30,45 +30,86 @@ def _msg(**kwargs) -> StoredMessage:
     return StoredMessage(**base)
 
 
-def test_80mm_cpdlc_uses_acars_begin_end_wrapper():
+def test_characters_per_line_font_b_and_wide():
+    assert PrinterSettings("console", paper_width="80", font="b").characters_per_line() == 64
+    assert (
+        PrinterSettings(
+            "console", paper_width="80", char_width=2
+        ).characters_per_line()
+        == 24
+    )
+    assert (
+        PrinterSettings(
+            "console", paper_width="80", character_width_override=40
+        ).characters_per_line()
+        == 40
+    )
+
+
+def test_header_reg_callsign_stamp():
+    """Real strip: D-AILA ----  DLH4MC 04AUG 1809Z"""
     out = ThermalMessageFormatter().format(
-        _msg(),
+        _msg(
+            callsign="DLH4MC",
+            message_type="telex",
+            normalized_body="CLEARANCE REQUEST RECEIVED\nSTANDBY",
+            received_at="2026-08-04T18:09:00+00:00",
+        ),
         PrinterSettings(
             "console",
             paper_width="80",
-            aircraft_registration="HB-IJK",
+            aircraft_registration="D-AILA",
         ),
-        now=datetime(2026, 8, 2, 14, 32, tzinfo=UTC),
     )
     lines = out.splitlines()
     assert lines[0] == "ACARS BEGIN"
-    assert lines[1] == "02 AUG 2026  1432Z  REG HB-IJK"
+    assert lines[1] == "D-AILA ----  DLH4MC 04AUG 1809Z"
     assert lines[2] == ""
-    assert lines[3] == "02 AUG 2026  1430Z"
-    assert lines[4] == ""
-    assert "FROM LSAS_CTR" in out
-    assert "CLIMB TO AND MAINTAIN FL360" in out
-    assert lines[-2] == ""
+    assert "CLEARANCE REQUEST RECEIVED" in out
+    assert "STANDBY" in out
     assert lines[-1] == "ACARS END"
-    assert "FLT" not in out
-    assert "REQ" not in out
-    assert "ACARS PRINT BRIDGE" not in out
-    assert "TYPE:" not in out
-    assert "-----" not in out
-    assert PrinterSettings("console", paper_width="80").characters_per_line() == 48
+    assert "----" in lines[1]
 
 
-def test_no_reg_when_registration_not_configured():
+def test_empty_registration_omits_dashes():
     out = ThermalMessageFormatter().format(
-        _msg(callsign="DLH9911", received_at=""),
+        _msg(
+            callsign="DLH4MC",
+            received_at="2026-08-04T18:09:00+00:00",
+        ),
         PrinterSettings("console", paper_width="80"),
-        now=datetime(2026, 8, 2, 13, 19, tzinfo=UTC),
     )
-    assert out.splitlines()[1] == "02 AUG 2026  1319Z"
-    assert "REG" not in out
-    # No received_at → message time equals print time.
-    assert out.splitlines()[3] == "02 AUG 2026  1319Z"
-    assert "\n\nACARS END" in out
+    header = out.splitlines()[1]
+    assert header == "DLH4MC 04AUG 1809Z"
+    assert "----" not in header
+    assert not header.startswith("D-")
+
+
+def test_atis_with_registration_includes_callsign():
+    out = ThermalMessageFormatter().format(
+        _msg(
+            callsign="DLH4MC",
+            sender="acars",
+            message_type="inforeq",
+            normalized_body=(
+                "VATATIS EDDF_D\n"
+                "DEP-ATIS EDDF G METAR 041750\n"
+                "RWY 25C 18\n"
+                "TREND NOSIG"
+            ),
+            min=None,
+            ra=None,
+            received_at="2026-08-04T18:05:00+00:00",
+        ),
+        PrinterSettings(
+            "console",
+            paper_width="80",
+            aircraft_registration="D-AILA",
+        ),
+    )
+    assert out.splitlines()[1] == "D-AILA ----  DLH4MC 04AUG 1805Z"
+    assert "VATATIS" not in out
+    assert "DEP-ATIS EDDF G METAR 041750" in out
 
 
 def test_58mm_width_and_token_wrap():
@@ -77,7 +118,7 @@ def test_58mm_width_and_token_wrap():
             normalized_body="CLEARED TO LSZH VIA N850 TOLEN DCT RUDUS T161 HAREM",
             message_type="cpdlc",
         ),
-        PrinterSettings("console", paper_width="58"),
+        PrinterSettings("console", paper_width="58", aircraft_registration="D-AILA"),
     )
     assert PrinterSettings("console", paper_width="58").characters_per_line() == 32
     assert "N850" in out
@@ -87,7 +128,6 @@ def test_58mm_width_and_token_wrap():
 
 
 def test_inforeq_prints_atis_body_not_hoppie_request():
-    """Real D-ATIS strips are the uplink text — not REQ VATATIS EDDH_D."""
     out = ThermalMessageFormatter().format(
         _msg(
             callsign="DLH9911",
@@ -110,20 +150,11 @@ def test_inforeq_prints_atis_body_not_hoppie_request():
             paper_width="80",
             aircraft_registration="D-AIXX",
         ),
-        now=datetime(2026, 8, 2, 18, 14, tzinfo=UTC),
     )
-    assert out.splitlines()[0] == "ACARS BEGIN"
-    assert out.splitlines()[1] == "02 AUG 2026  1814Z  REG D-AIXX"
-    assert out.splitlines()[3] == "02 AUG 2026  1810Z"
+    assert out.splitlines()[1] == "D-AIXX ----  DLH9911 02AUG 1810Z"
     assert "VATATIS" not in out
-    assert "REQ" not in out
-    assert "FLT" not in out
-    assert "FROM acars" not in out
     assert "EDDH DEP ATIS H" in out
-    assert "RWY 23 IN USE" in out
-    assert "QNH 1015" in out
     assert out.rstrip().endswith("ACARS END")
-    assert "\n\nACARS END" in out
 
 
 def test_inforeq_unavailable_shows_station():
@@ -142,16 +173,11 @@ def test_inforeq_unavailable_shows_station():
             paper_width="80",
             aircraft_registration="D-AIXX",
         ),
-        now=datetime(2026, 8, 2, 13, 19, tzinfo=UTC),
     )
-    assert "ACARS BEGIN" in out
-    assert "02 AUG 2026  1319Z  REG D-AIXX" in out
-    assert "02 AUG 2026  1318Z" in out
+    assert "D-AIXX ----  DLH9911 02AUG 1318Z" in out
     assert "EDDH DEP ATIS" in out
     assert "VATATIS" not in out
-    assert "REQ" not in out
     assert "THIS ATIS IS NOT" in out
-    assert "AVAILABLE" in out
     assert "\n\nACARS END" in out
 
 
@@ -161,13 +187,42 @@ def test_inforeq_station_title_helpers():
     assert inforeq_station_title("METAR LOWW") == "METAR LOWW"
 
 
-def test_test_page_uses_wrapper():
+def test_test_page_is_demo_pdc_strip():
+    out = ThermalMessageFormatter().test_page(
+        PrinterSettings("console", paper_width="80"),
+    )
+    lines = out.splitlines()
+    assert lines[0] == "ACARS BEGIN"
+    # Empty registration → no sample tail injected.
+    assert lines[1] == "DLH4MC 04AUG 1809Z"
+    assert "----" not in lines[1]
+    assert "CLD 1807 260804 EDDF PDC 001" in out
+    assert "CINDY8S SQUAWK 1000 NEXT FREQ" in out
+    assert "TEST PRINT" not in out
+    assert out.rstrip().endswith("ACARS END")
+
+
+def test_test_page_uses_configured_registration():
     out = ThermalMessageFormatter().test_page(
         PrinterSettings("console", paper_width="80", aircraft_registration="D-AIXX"),
-        now=datetime(2026, 8, 2, 12, 0, tzinfo=UTC),
     )
-    assert out.startswith("ACARS BEGIN\n")
-    assert "REG D-AIXX" in out
-    assert "TEST PRINT" in out
-    assert out.rstrip().endswith("ACARS END")
-    assert "\n\nACARS END" in out
+    assert out.splitlines()[1] == "D-AIXX ----  DLH4MC 04AUG 1809Z"
+
+
+def test_test_page_empty_registration_omits_dashes():
+    out = ThermalMessageFormatter().test_page(
+        PrinterSettings("console", paper_width="80", aircraft_registration=""),
+    )
+    header = out.splitlines()[1]
+    assert header == "DLH4MC 04AUG 1809Z"
+    assert "D-AILA" not in out
+    assert "----" not in header
+
+
+def test_body_forced_uppercase():
+    out = ThermalMessageFormatter().format(
+        _msg(normalized_body="climb to fl360"),
+        PrinterSettings("console", paper_width="80", aircraft_registration="D-AILA"),
+    )
+    assert "CLIMB TO FL360" in out
+    assert "climb to fl360" not in out

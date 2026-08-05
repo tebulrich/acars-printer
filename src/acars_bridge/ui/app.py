@@ -3,6 +3,7 @@ from __future__ import annotations
 import os
 import subprocess
 import sys
+import time
 from collections.abc import Callable
 from datetime import UTC, datetime
 from typing import Any
@@ -23,8 +24,11 @@ from PySide6.QtWidgets import (
     QListWidgetItem,
     QMainWindow,
     QMenu,
+    QMessageBox,
     QPlainTextEdit,
     QPushButton,
+    QScrollArea,
+    QSpinBox,
     QSystemTrayIcon,
     QTabWidget,
     QVBoxLayout,
@@ -66,15 +70,17 @@ class AcarsBridgeApp(QMainWindow):
         self._closing = False
         self._quit_requested = False
         self._tray: QSystemTrayIcon | None = None
-        self._tray_hint_shown = False
         self._printer_choices = list_printer_choices(session.settings.printer_destination())
+        self._format_widgets: dict[str, Any] = {}
         self._settings_widgets: dict[str, Any] = {}
 
         self.setWindowTitle(f"ACARS Print Bridge  ·  {__version__}")
-        self.setMinimumSize(960, 640)
-        self.resize(1100, 720)
+        self.setMinimumSize(720, 520)
+        self.resize(900, 600)
         self._app_icon = make_app_icon()
         self.setWindowIcon(self._app_icon)
+        # Detail pane: hidden while auto-print is on until the user opens a message.
+        self._detail_opened = False
 
         # Messages are session-scoped in the UI — don't keep yesterday's list.
         self.session.messages.clear_all()
@@ -171,7 +177,15 @@ class AcarsBridgeApp(QMainWindow):
         )
         self.btn_debug = QPushButton("Debug")
         self.btn_debug.clicked.connect(self._show_debug_log)
-        for btn in (self.btn_connect, self.btn_disconnect, self.btn_debug):
+        self.btn_quit = QPushButton("Quit")
+        self.btn_quit.setToolTip("Exit completely (stops the Hoppie tap)")
+        self.btn_quit.clicked.connect(self._quit_app)
+        for btn in (
+            self.btn_connect,
+            self.btn_disconnect,
+            self.btn_debug,
+            self.btn_quit,
+        ):
             row.addWidget(btn)
         self._sync_connection_buttons(running=False)
         return header
@@ -184,13 +198,20 @@ class AcarsBridgeApp(QMainWindow):
 
         self.tabs = QTabWidget()
         self.tab_messages = QWidget()
+        self.tab_format = QWidget()
         self.tab_settings = QWidget()
         self.tabs.addTab(self.tab_messages, "Messages")
+        self.tabs.addTab(self.tab_format, "Format")
         self.tabs.addTab(self.tab_settings, "Settings")
         self._build_messages_tab()
+        self._build_format_tab()
         self._build_settings_tab()
-        row.addWidget(self.tabs, stretch=2)
-        row.addWidget(self._build_detail(), stretch=3)
+        self._body_row = row
+        self._tabs_stretch = 1
+        row.addWidget(self.tabs, stretch=self._tabs_stretch)
+        self.detail_panel = self._build_detail()
+        row.addWidget(self.detail_panel, stretch=2)
+        self._sync_detail_visibility()
         return body
 
     def _build_messages_tab(self) -> None:
@@ -210,9 +231,9 @@ class AcarsBridgeApp(QMainWindow):
         layout.addLayout(head)
 
         note = QLabel(
-            "Connect as Administrator, then keep flying — any Hoppie aircraft. "
-            "This app watches Hoppie traffic on your PC and prints it. "
-            "Leave the callsign filter empty unless you only want one flight."
+            "Connect as Administrator, then keep flying. "
+            "Tune strip look on the Format tab (Save and test print). "
+            "With auto-print on, open a row to inspect it."
         )
         note.setObjectName("Muted")
         note.setWordWrap(True)
@@ -226,14 +247,22 @@ class AcarsBridgeApp(QMainWindow):
         detail = QFrame()
         detail.setObjectName("Detail")
         layout = QVBoxLayout(detail)
-        layout.setContentsMargins(18, 18, 18, 18)
+        layout.setContentsMargins(14, 14, 14, 14)
+        layout.setSpacing(8)
 
+        title_row = QHBoxLayout()
         self.detail_title = QLabel("Select a message")
         self.detail_title.setObjectName("Title")
+        title_row.addWidget(self.detail_title, stretch=1)
+        self.btn_hide_detail = QPushButton("Hide")
+        self.btn_hide_detail.setToolTip("Collapse message details")
+        self.btn_hide_detail.clicked.connect(self._hide_detail)
+        title_row.addWidget(self.btn_hide_detail)
+        layout.addLayout(title_row)
+
         self.detail_meta = QLabel("New traffic from your aircraft client appears here and prints.")
         self.detail_meta.setObjectName("Muted")
         self.detail_meta.setWordWrap(True)
-        layout.addWidget(self.detail_title)
         layout.addWidget(self.detail_meta)
 
         self.detail_body = QPlainTextEdit()
@@ -246,35 +275,32 @@ class AcarsBridgeApp(QMainWindow):
         self.btn_print = QPushButton("Print")
         self.btn_print.setObjectName("Primary")
         self.btn_print.clicked.connect(lambda: self._run_action("reprint", self._reprint))
-        self.btn_test_print = QPushButton("Test print")
-        self.btn_test_print.clicked.connect(
-            lambda: self._run_action("test_print", self._test_print)
-        )
+        self.btn_print.setEnabled(False)
         action_row.addWidget(self.btn_print)
-        action_row.addWidget(self.btn_test_print)
         action_row.addStretch(1)
         layout.addLayout(action_row)
         return detail
 
-    def _build_settings_tab(self) -> None:
-        form = QFormLayout(self.tab_settings)
-        form.setContentsMargins(16, 16, 16, 16)
-        form.setHorizontalSpacing(18)
-        form.setVerticalSpacing(12)
+    def _build_format_tab(self) -> None:
+        """Strip appearance + Test print — tweak and print without leaving this tab."""
+        outer = QVBoxLayout(self.tab_format)
+        outer.setContentsMargins(0, 0, 0, 0)
+        outer.setSpacing(0)
 
-        callsign = QLineEdit(self.session.settings.callsign() or "")
-        callsign.setPlaceholderText("optional — only print this flight")
+        scroll = QScrollArea()
+        scroll.setWidgetResizable(True)
+        scroll.setFrameShape(QFrame.Shape.NoFrame)
+        scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+
+        form_host = QWidget()
+        form = QFormLayout(form_host)
+        form.setContentsMargins(16, 16, 16, 12)
+        form.setHorizontalSpacing(18)
+        form.setVerticalSpacing(10)
+        form.setFieldGrowthPolicy(QFormLayout.FieldGrowthPolicy.ExpandingFieldsGrow)
 
         registration = QLineEdit(self.session.settings.aircraft_registration() or "")
-        registration.setPlaceholderText("optional tail — omit REG if empty")
-
-        logon = QLineEdit()
-        logon.setEchoMode(QLineEdit.EchoMode.Password)
-        logon.setPlaceholderText(
-            "stored — leave blank to keep"
-            if self.session.settings.hoppie_logon()
-            else "Hoppie ACARS logon code (not your Windows user)"
-        )
+        registration.setPlaceholderText("optional — e.g. D-AILA (omit if empty)")
 
         printer = QComboBox()
         labels = [c.label for c in self._printer_choices]
@@ -293,6 +319,208 @@ class AcarsBridgeApp(QMainWindow):
         cut = QComboBox()
         cut.addItems(["on", "off"])
         cut.setCurrentText("on" if self.session.settings.cut_enabled() else "off")
+
+        print_mode = QComboBox()
+        print_mode.addItem("Exact size — set text height in mm/px", "bitmap")
+        print_mode.addItem("Printer built-in font (fixed sizes only)", "native")
+        mode_idx = print_mode.findData(self.session.settings.print_render_mode())
+        if mode_idx >= 0:
+            print_mode.setCurrentIndex(mode_idx)
+
+        from acars_bridge.printing.bitmap_render import mm_hint
+
+        print_glyph_px = QSpinBox()
+        print_glyph_px.setRange(8, 64)
+        print_glyph_px.setSuffix(" px")
+        print_glyph_px.setValue(self.session.settings.print_glyph_px())
+        print_glyph_px.setToolTip(
+            "How tall each letter is on the paper, in printer dots. "
+            "At 203 dpi, 8 dots ≈ 1 mm. Lower this if the text looks too big."
+        )
+        glyph_hint = QLabel(mm_hint(print_glyph_px.value()))
+        glyph_hint.setObjectName("Muted")
+        print_glyph_px.valueChanged.connect(
+            lambda value: glyph_hint.setText(mm_hint(value))
+        )
+
+        print_line_gap = QSpinBox()
+        print_line_gap.setRange(0, 32)
+        print_line_gap.setSuffix(" px")
+        print_line_gap.setValue(self.session.settings.print_line_gap_px())
+        print_line_gap.setToolTip("Extra blank space between lines of text.")
+
+        print_font = QComboBox()
+        print_font.addItem("Font A (standard ~24 px)", "a")
+        print_font.addItem("Font B (narrow ~17 px)", "b")
+        font_idx = print_font.findData(self.session.settings.print_font())
+        if font_idx >= 0:
+            print_font.setCurrentIndex(font_idx)
+
+        print_char_w = QSpinBox()
+        print_char_w.setRange(1, 8)
+        print_char_w.setPrefix("× ")
+        print_char_w.setValue(self.session.settings.print_char_width())
+        print_char_w.setToolTip("ESC/POS width multiplier (1–8). Cannot go below 1×.")
+
+        print_char_h = QSpinBox()
+        print_char_h.setRange(1, 8)
+        print_char_h.setPrefix("× ")
+        print_char_h.setValue(self.session.settings.print_char_height())
+        print_char_h.setToolTip("ESC/POS height multiplier (1–8). Cannot go below 1×.")
+
+        print_bold = QComboBox()
+        print_bold.addItems(["on", "off"])
+        print_bold.setCurrentText("on" if self.session.settings.print_bold() else "off")
+
+        print_columns = QComboBox()
+        print_columns.addItem("Auto (paper + font)", "auto")
+        for cols in (32, 40, 42, 48, 56, 64):
+            print_columns.addItem(f"{cols} columns", str(cols))
+        stored_cols = self.session.settings.print_columns()
+        cols_key = "auto" if stored_cols is None else str(stored_cols)
+        cols_idx = print_columns.findData(cols_key)
+        if cols_idx >= 0:
+            print_columns.setCurrentIndex(cols_idx)
+        elif stored_cols is not None:
+            print_columns.addItem(f"{stored_cols} columns", str(stored_cols))
+            print_columns.setCurrentIndex(print_columns.count() - 1)
+
+        print_spacing = QSpinBox()
+        print_spacing.setRange(0, 255)
+        print_spacing.setSpecialValueText("printer default")
+        spacing_dots = self.session.settings.print_line_spacing_dots()
+        print_spacing.setValue(0 if spacing_dots is None else spacing_dots)
+        print_spacing.setToolTip(
+            "Built-in font line pitch (1/180 inch ≈ 0.14 mm). 0 = printer default."
+        )
+
+        print_lead_in = QSpinBox()
+        print_lead_in.setRange(0, 12)
+        print_lead_in.setSuffix(" lines")
+        print_lead_in.setValue(self.session.settings.print_lead_in())
+        print_lead_in.setToolTip(
+            "Blank feed before the first line. Default 2 ≈ 1.5 cm on a POS-80."
+        )
+
+        print_tear_feed = QSpinBox()
+        print_tear_feed.setRange(0, 16)
+        print_tear_feed.setSuffix(" lines")
+        print_tear_feed.setValue(self.session.settings.print_tear_feed())
+
+        glyph_row = QWidget()
+        glyph_layout = QHBoxLayout(glyph_row)
+        glyph_layout.setContentsMargins(0, 0, 0, 0)
+        glyph_layout.setSpacing(10)
+        glyph_layout.addWidget(print_glyph_px)
+        glyph_layout.addWidget(glyph_hint, stretch=1)
+
+        self._format_widgets = {
+            "registration": registration,
+            "printer": printer,
+            "width": width,
+            "cut": cut,
+            "print_font": print_font,
+            "print_mode": print_mode,
+            "print_glyph_px": print_glyph_px,
+            "print_line_gap": print_line_gap,
+            "print_char_w": print_char_w,
+            "print_char_h": print_char_h,
+            "print_bold": print_bold,
+            "print_columns": print_columns,
+            "print_spacing": print_spacing,
+            "print_lead_in": print_lead_in,
+            "print_tear_feed": print_tear_feed,
+            "glyph_hint": glyph_hint,
+        }
+
+        form.addRow("Aircraft registration", registration)
+        form.addRow("Printer", printer)
+        form.addRow("Paper width", width)
+        form.addRow("Cut / tear assist", cut)
+        form.addRow("Print mode", print_mode)
+        form.addRow("Text height", glyph_row)
+        form.addRow("Space between lines", print_line_gap)
+        form.addRow("Print font (built-in)", print_font)
+        form.addRow("Char width ×", print_char_w)
+        form.addRow("Char height ×", print_char_h)
+        form.addRow("Line spacing (dots)", print_spacing)
+        form.addRow("Print bold", print_bold)
+        form.addRow("Columns (wrap)", print_columns)
+        form.addRow("Top margin", print_lead_in)
+        form.addRow("Bottom feed", print_tear_feed)
+
+        def _sync_print_mode_widgets() -> None:
+            bitmap = str(print_mode.currentData() or "bitmap") == "bitmap"
+            print_glyph_px.setEnabled(bitmap)
+            glyph_hint.setEnabled(bitmap)
+            print_line_gap.setEnabled(bitmap)
+            print_font.setEnabled(not bitmap)
+            print_char_w.setEnabled(not bitmap)
+            print_char_h.setEnabled(not bitmap)
+            print_spacing.setEnabled(not bitmap)
+
+        print_mode.currentIndexChanged.connect(lambda _i: _sync_print_mode_widgets())
+        _sync_print_mode_widgets()
+
+        help_lbl = QLabel(
+            "Change a value, then Save and test print. Compare with a real strip. "
+            "Exact size: Text height 8 ≈ 1 mm on a typical POS-80 — if letters look "
+            "~1 mm too tall, try 16–18."
+        )
+        help_lbl.setObjectName("Muted")
+        help_lbl.setWordWrap(True)
+        form.addRow(help_lbl)
+
+        scroll.setWidget(form_host)
+        outer.addWidget(scroll, stretch=1)
+
+        footer = QFrame()
+        footer.setObjectName("SettingsFooter")
+        footer_row = QHBoxLayout(footer)
+        footer_row.setContentsMargins(16, 10, 16, 12)
+        footer_row.setSpacing(10)
+        test_btn = QPushButton("Save and test print")
+        test_btn.setObjectName("Primary")
+        test_btn.setToolTip("Save these format settings, then print a sample strip")
+        test_btn.clicked.connect(
+            lambda: self._run_action("format_test_print", self._save_format_and_test)
+        )
+        save_btn = QPushButton("Save format")
+        save_btn.clicked.connect(
+            lambda: self._run_action("save_format", self._save_format_settings)
+        )
+        footer_row.addWidget(test_btn)
+        footer_row.addWidget(save_btn)
+        footer_row.addStretch(1)
+        outer.addWidget(footer)
+
+    def _build_settings_tab(self) -> None:
+        outer = QVBoxLayout(self.tab_settings)
+        outer.setContentsMargins(0, 0, 0, 0)
+        outer.setSpacing(0)
+
+        scroll = QScrollArea()
+        scroll.setWidgetResizable(True)
+        scroll.setFrameShape(QFrame.Shape.NoFrame)
+        scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+
+        form_host = QWidget()
+        form = QFormLayout(form_host)
+        form.setContentsMargins(16, 16, 16, 12)
+        form.setHorizontalSpacing(18)
+        form.setVerticalSpacing(10)
+        form.setFieldGrowthPolicy(QFormLayout.FieldGrowthPolicy.ExpandingFieldsGrow)
+
+        callsign = QLineEdit(self.session.settings.callsign() or "")
+        callsign.setPlaceholderText("optional — only print this flight")
+
+        logon = QLineEdit()
+        logon.setEchoMode(QLineEdit.EchoMode.Password)
+        logon.setPlaceholderText(
+            "stored — leave blank to keep"
+            if self.session.settings.hoppie_logon()
+            else "Hoppie ACARS logon code (not your Windows user)"
+        )
 
         auto_print = QComboBox()
         auto_print.addItems(["on", "off"])
@@ -321,11 +549,7 @@ class AcarsBridgeApp(QMainWindow):
 
         self._settings_widgets = {
             "callsign": callsign,
-            "registration": registration,
             "logon": logon,
-            "printer": printer,
-            "width": width,
-            "cut": cut,
             "auto_print": auto_print,
             "auto_connect": auto_connect,
             "check_updates": check_updates,
@@ -333,11 +557,7 @@ class AcarsBridgeApp(QMainWindow):
         }
 
         form.addRow("Callsign filter", callsign)
-        form.addRow("Aircraft registration", registration)
         form.addRow("Hoppie logon", logon)
-        form.addRow("Printer", printer)
-        form.addRow("Paper width", width)
-        form.addRow("Cut / tear assist", cut)
         form.addRow("Auto-print", auto_print)
         form.addRow("Auto-connect", auto_connect)
         form.addRow("Check for updates", check_updates)
@@ -345,17 +565,21 @@ class AcarsBridgeApp(QMainWindow):
 
         help_lbl = QLabel(
             "Hoppie logon is the secret ACARS code from hoppie.nl (not a Windows "
-            "username). The bridge injects it when the plane sends a blank/wrong "
-            "logon. Connect as Administrator to intercept; Disconnect restores "
-            "normal Hoppie access. Auto-connect starts the tap when the app "
-            "opens (still needs Administrator). Updates check GitHub Releases "
-            "and can one-click install the Windows exe. Cut / tear assist feeds "
-            "paper to the tear bar."
+            "username). Printer and strip layout live on the Format tab. Connect as "
+            "Administrator to intercept; Disconnect restores normal Hoppie access."
         )
         help_lbl.setObjectName("Muted")
         help_lbl.setWordWrap(True)
         form.addRow(help_lbl)
 
+        scroll.setWidget(form_host)
+        outer.addWidget(scroll, stretch=1)
+
+        footer = QFrame()
+        footer.setObjectName("SettingsFooter")
+        footer_row = QHBoxLayout(footer)
+        footer_row.setContentsMargins(16, 10, 16, 12)
+        footer_row.setSpacing(10)
         save = QPushButton("Save settings")
         save.setObjectName("Primary")
         save.clicked.connect(
@@ -363,10 +587,14 @@ class AcarsBridgeApp(QMainWindow):
         )
         check_btn = QPushButton("Check for updates now")
         check_btn.clicked.connect(lambda: self._updates.check(manual=True))
-        form.addRow(save)
-        form.addRow(check_btn)
+        footer_row.addWidget(save)
+        footer_row.addWidget(check_btn)
+        footer_row.addStretch(1)
+        outer.addWidget(footer)
 
     def _setup_tray(self) -> None:
+        # Tray is a convenience only. Elevated Windows apps often lose the
+        # notification icon — never rely on it for exit (X / Quit always exit).
         if not QSystemTrayIcon.isSystemTrayAvailable():
             self.debug.info("tray", available=False)
             return
@@ -376,7 +604,7 @@ class AcarsBridgeApp(QMainWindow):
         show_action = QAction("Show window", self)
         show_action.triggered.connect(self._show_from_tray)
         quit_action = QAction("Quit", self)
-        quit_action.triggered.connect(self._quit_from_tray)
+        quit_action.triggered.connect(self._quit_app)
         menu.addAction(show_action)
         menu.addSeparator()
         menu.addAction(quit_action)
@@ -392,6 +620,12 @@ class AcarsBridgeApp(QMainWindow):
         self.activateWindow()
 
     def _quit_from_tray(self) -> None:
+        self._quit_app()
+
+    def _quit_app(self) -> None:
+        """Exit for real — stop tap, release lock, leave no ghost process."""
+        if self._closing:
+            return
         self._quit_requested = True
         self.close()
 
@@ -401,10 +635,7 @@ class AcarsBridgeApp(QMainWindow):
             QSystemTrayIcon.ActivationReason.Trigger,
             QSystemTrayIcon.ActivationReason.DoubleClick,
         ):
-            if self.isVisible() and not self.isMinimized():
-                self.hide()
-            else:
-                self._show_from_tray()
+            self._show_from_tray()
 
     def _update_tray_tooltip(self) -> None:
         if self._tray is None:
@@ -460,22 +691,37 @@ class AcarsBridgeApp(QMainWindow):
             item.setFlags(Qt.ItemFlag.NoItemFlags)
             self.message_list.addItem(item)
             self.message_list.blockSignals(False)
+            self._selected_id = None
+            self._detail_opened = False
+            self._reset_detail_placeholder()
+            self._sync_detail_visibility()
             return
         for msg in rows:
             self.message_list.addItem(self._message_item(msg))
         self.message_list.blockSignals(False)
-        if self._selected_id is None and rows:
-            self._select_message(rows[0].id)
-        elif self._selected_id in self._message_ids:
+
+        auto_print = self.session.settings.auto_print()
+        if not auto_print:
+            # Review mode: keep detail open and select something useful.
+            self._detail_opened = True
+            if self._selected_id in self._message_ids:
+                self._select_message(self._selected_id)
+            elif rows:
+                self._select_message(rows[0].id)
+        elif self._detail_opened and self._selected_id in self._message_ids:
             self._select_message(self._selected_id)
+        else:
+            self._selected_id = None
+            self.message_list.clearSelection()
+            self._detail_opened = False
+            self._reset_detail_placeholder()
+        self._sync_detail_visibility()
 
     def _message_item(self, msg: StoredMessage) -> QListWidgetItem:
-        preview = msg.normalized_body.replace("\n", " · ")[:64]
+        preview = msg.normalized_body.replace("\n", " ")[:48]
         direction = "OUT" if msg.direction == "out" else "IN"
-        label = (
-            f"{direction}  {msg.sender or msg.to_station or '?'}  "
-            f"{msg.message_type.upper()}\n{preview}"
-        )
+        station = msg.sender or msg.to_station or "?"
+        label = f"{direction}  {station}  {msg.message_type.upper()}  {preview}"
         item = QListWidgetItem(label)
         item.setData(Qt.ItemDataRole.UserRole, msg.id)
         return item
@@ -486,7 +732,9 @@ class AcarsBridgeApp(QMainWindow):
             return
         mid = items[0].data(Qt.ItemDataRole.UserRole)
         if isinstance(mid, int):
+            self._detail_opened = True
             self._select_message(mid)
+            self._sync_detail_visibility()
 
     def _select_message(self, message_id: int) -> None:
         self._selected_id = message_id
@@ -519,6 +767,39 @@ class AcarsBridgeApp(QMainWindow):
             meta_bits.append(f"RA {msg.ra}")
         self.detail_meta.setText("  ·  ".join(meta_bits))
         self.detail_body.setPlainText(msg.normalized_body)
+        self.btn_print.setEnabled(True)
+
+    def _reset_detail_placeholder(self) -> None:
+        self.detail_title.setText("Select a message")
+        self.detail_meta.setText(
+            "Traffic prints automatically when auto-print is on. "
+            "Click a row to inspect it here."
+        )
+        self.detail_body.clear()
+        self.btn_print.setEnabled(False)
+
+    def _hide_detail(self) -> None:
+        self._detail_opened = False
+        self._selected_id = None
+        self.message_list.clearSelection()
+        self._reset_detail_placeholder()
+        self._sync_detail_visibility()
+
+    def _detail_should_show(self) -> bool:
+        if not self.session.settings.auto_print():
+            return True
+        return self._detail_opened and self._selected_id is not None
+
+    def _sync_detail_visibility(self) -> None:
+        show = self._detail_should_show()
+        self.detail_panel.setVisible(show)
+        self.btn_hide_detail.setVisible(self.session.settings.auto_print())
+        # Give the list more room when detail is collapsed.
+        if hasattr(self, "_body_row"):
+            self._body_row.setStretch(self._body_row.indexOf(self.tabs), 1 if show else 1)
+            self._body_row.setStretch(
+                self._body_row.indexOf(self.detail_panel), 2 if show else 0
+            )
 
     def _flash(self, text: str, *, error: bool = False) -> None:
         self.toast.setText(text)
@@ -719,22 +1000,11 @@ class AcarsBridgeApp(QMainWindow):
             self._flash(f"Test print failed: {exc}", error=True)
 
     def _printer_settings(self) -> PrinterSettings:
-        return PrinterSettings(
-            destination=self.session.settings.printer_destination(),
-            paper_width=self.session.settings.paper_width(),
-            cut_enabled=self.session.settings.cut_enabled(),
-            aircraft_registration=self.session.settings.aircraft_registration(),
-        )
+        return self.session.settings.as_printer_settings()
 
-    def _save_settings(self) -> None:
-        w = self._settings_widgets
-        self.session.settings.set_callsign(w["callsign"].text().strip())
+    def _save_format_settings(self, *, quiet: bool = False) -> None:
+        w = self._format_widgets
         self.session.settings.set_aircraft_registration(w["registration"].text().strip())
-        logon_value = w["logon"].text().strip()
-        if logon_value:
-            self.session.settings.set_hoppie_logon(logon_value)
-            w["logon"].clear()
-            w["logon"].setPlaceholderText("stored — leave blank to keep")
         printer_label = w["printer"].currentText().strip() or "console (log only)"
         self.session.settings.set_printer_destination(
             destination_from_label(printer_label, self._printer_choices)
@@ -742,6 +1012,38 @@ class AcarsBridgeApp(QMainWindow):
         width_value = w["width"].currentData() or "80"
         self.session.settings.set_paper_width(str(width_value))
         self.session.settings.set_cut_enabled(w["cut"].currentText() == "on")
+        self.session.settings.set_print_render_mode(
+            str(w["print_mode"].currentData() or "bitmap")
+        )
+        self.session.settings.set_print_font(str(w["print_font"].currentData() or "a"))
+        self.session.settings.set_print_glyph_px(w["print_glyph_px"].value())
+        self.session.settings.set_print_line_gap_px(w["print_line_gap"].value())
+        self.session.settings.set_print_char_width(w["print_char_w"].value())
+        self.session.settings.set_print_char_height(w["print_char_h"].value())
+        spacing_val = w["print_spacing"].value()
+        self.session.settings.set_print_line_spacing_dots(
+            None if spacing_val <= 0 else spacing_val
+        )
+        self.session.settings.set_print_bold(w["print_bold"].currentText() == "on")
+        self.session.settings.set_print_columns(w["print_columns"].currentData())
+        self.session.settings.set_print_lead_in(w["print_lead_in"].value())
+        self.session.settings.set_print_tear_feed(w["print_tear_feed"].value())
+        self.session.rebuild_printer()
+        if not quiet:
+            self._flash("Format saved.")
+
+    def _save_format_and_test(self) -> None:
+        self._save_format_settings(quiet=True)
+        self._test_print()
+
+    def _save_settings(self) -> None:
+        w = self._settings_widgets
+        self.session.settings.set_callsign(w["callsign"].text().strip())
+        logon_value = w["logon"].text().strip()
+        if logon_value:
+            self.session.settings.set_hoppie_logon(logon_value)
+            w["logon"].clear()
+            w["logon"].setPlaceholderText("stored — leave blank to keep")
         self.session.settings.set_auto_print(w["auto_print"].currentText() == "on")
         self.session.settings.set_auto_connect(w["auto_connect"].currentText() == "on")
         self.session.settings.set_check_updates(
@@ -753,7 +1055,6 @@ class AcarsBridgeApp(QMainWindow):
         prev_scale = self.session.settings.ui_scale()
         self.session.settings.set_ui_scale(scale_value)
         notes: list[str] = []
-        self.session.rebuild_printer()
         self._refresh_header()
         if abs(prev_scale - scale_value) > 0.001:
             app = QApplication.instance()
@@ -761,8 +1062,9 @@ class AcarsBridgeApp(QMainWindow):
                 apply_theme(app, ui_scale=scale_value)
             notes.append("UI scale applied")
         suffix = f" · {'; '.join(notes)}" if notes else ""
-        self._flash(f"Settings saved{suffix} — Connect as Administrator when ready.")
+        self._flash(f"Settings saved{suffix}")
         self._reload_messages()
+        self._sync_detail_visibility()
 
     def _tick_clock(self) -> None:
         if self._closing:
@@ -872,70 +1174,182 @@ class AcarsBridgeApp(QMainWindow):
         }
 
     def closeEvent(self, event) -> None:  # noqa: N802 - Qt API
-        # Close / X → tray (keep watching Hoppie). Quit from the tray menu exits.
-        if (
-            not self._quit_requested
-            and self._tray is not None
-            and self._tray.isVisible()
-        ):
-            event.ignore()
-            self.hide()
-            if not self._tray_hint_shown:
-                self._tray_hint_shown = True
-                self._tray.showMessage(
-                    "ACARS Print Bridge",
-                    "Still running in the tray. Right-click the icon → Quit to exit.",
-                    QSystemTrayIcon.MessageIcon.Information,
-                    4000,
-                )
+        # Always exit on X / Quit. Do not hide to tray — elevated Windows
+        # builds often lose the tray icon and leave a ghost process holding app.lock.
+        if self._closing:
+            event.accept()
+            super().closeEvent(event)
             return
         self._closing = True
-        self.debug.info("app_closing", **self._debug_context())
-        self._clock_timer.stop()
+        self._quit_requested = True
+        try:
+            self.debug.info("app_closing", **self._debug_context())
+        except Exception:  # noqa: BLE001
+            pass
+        try:
+            self._clock_timer.stop()
+        except Exception:  # noqa: BLE001
+            pass
         if self._tray is not None:
-            self._tray.hide()
-        self.tap.stop()
-        self.session.close()
+            try:
+                self._tray.hide()
+            except Exception:  # noqa: BLE001
+                pass
+        try:
+            self.tap.stop()
+        except Exception:  # noqa: BLE001
+            pass
+        try:
+            self.session.close()
+        except Exception:  # noqa: BLE001
+            pass
+        event.accept()
         super().closeEvent(event)
+        app = QApplication.instance()
+        if app is not None:
+            app.quit()
+        # WinDivert / proxy threads can keep the process alive after Qt exits.
+        QTimer.singleShot(2000, lambda: os._exit(0))
 
     def changeEvent(self, event) -> None:  # noqa: N802 - Qt API
-        # Minimize also parks in the tray when available.
-        from PySide6.QtCore import QEvent
-
-        if (
-            event.type() == QEvent.Type.WindowStateChange
-            and self.isMinimized()
-            and self._tray is not None
-            and self._tray.isVisible()
-            and not self._quit_requested
-        ):
-            event.accept()
-            QTimer.singleShot(0, self.hide)
-            return
+        # Minimize stays on the taskbar (normal). No hide-to-tray.
         super().changeEvent(event)
 
 
-def run_app(paths: AppPaths | None = None) -> None:
-    import sys
+def _lock_holder_pid(lock: object) -> int | None:
+    try:
+        info = lock.getLockInfo()  # type: ignore[attr-defined]
+    except Exception:  # noqa: BLE001
+        return None
+    if not info:
+        return None
+    try:
+        pid = int(info[0])
+    except (TypeError, ValueError, IndexError):
+        return None
+    return pid if pid > 0 else None
 
+
+def _process_alive(pid: int) -> bool:
+    if pid <= 0:
+        return False
+    if os.name == "nt":
+        try:
+            completed = subprocess.run(
+                ["tasklist", "/FI", f"PID eq {pid}", "/NH"],
+                capture_output=True,
+                text=True,
+                timeout=5,
+                check=False,
+            )
+        except (OSError, subprocess.SubprocessError):
+            return False
+        out = (completed.stdout or "").strip()
+        return str(pid) in out and "No tasks" not in out
+    try:
+        os.kill(pid, 0)
+    except OSError:
+        return False
+    return True
+
+
+def _force_quit_pid(pid: int) -> tuple[bool, str]:
+    """Kill a stuck previous instance (works when this process is elevated)."""
+    if pid <= 0:
+        return False, "Invalid process id."
+    if pid == os.getpid():
+        return False, "Refusing to kill the current process."
+    if os.name == "nt":
+        try:
+            completed = subprocess.run(
+                ["taskkill", "/F", "/T", "/PID", str(pid)],
+                capture_output=True,
+                text=True,
+                timeout=15,
+                check=False,
+            )
+        except (OSError, subprocess.SubprocessError) as exc:
+            return False, str(exc)
+        detail = (completed.stderr or completed.stdout or "").strip()
+        if completed.returncode == 0 or not _process_alive(pid):
+            return True, detail or f"Ended PID {pid}."
+        return False, detail or f"taskkill failed for PID {pid}."
+    try:
+        os.kill(pid, 9)
+    except OSError as exc:
+        return False, str(exc)
+    return True, f"Ended PID {pid}."
+
+
+def _acquire_single_instance_lock(lock: object) -> bool:
+    """Take app.lock, offering to force-quit a live previous instance."""
+    lock.setStaleLockTime(5_000)  # type: ignore[attr-defined]
+    lock.removeStaleLockFile()  # type: ignore[attr-defined]
+    if lock.tryLock(100):  # type: ignore[attr-defined]
+        return True
+
+    pid = _lock_holder_pid(lock)
+    alive = _process_alive(pid) if pid else False
+    app = QApplication.instance() or QApplication(sys.argv)
+
+    if alive and pid is not None:
+        box = QMessageBox()
+        box.setIcon(QMessageBox.Icon.Warning)
+        box.setWindowTitle("ACARS Print Bridge")
+        box.setText("ACARS Print Bridge is already running.")
+        box.setInformativeText(
+            f"A previous instance (PID {pid}) is still alive — often with no "
+            "tray icon when running as Administrator.\n\n"
+            "Force quit it and start this copy?"
+        )
+        force = box.addButton("Force quit previous", QMessageBox.ButtonRole.AcceptRole)
+        box.addButton("Cancel", QMessageBox.ButtonRole.RejectRole)
+        box.exec()
+        if box.clickedButton() is not force:
+            return False
+        ok, detail = _force_quit_pid(pid)
+        if not ok:
+            QMessageBox.critical(
+                None,
+                "ACARS Print Bridge",
+                f"Could not end the previous instance.\n\n{detail}\n\n"
+                "Open Task Manager as Administrator and end "
+                '"ACARS Print Bridge.exe", then try again.',
+            )
+            return False
+        # Give Windows a moment to release the lock file handle.
+        time.sleep(0.4)
+        lock.removeStaleLockFile()  # type: ignore[attr-defined]
+        if lock.tryLock(500):  # type: ignore[attr-defined]
+            return True
+        QMessageBox.critical(
+            None,
+            "ACARS Print Bridge",
+            "Previous instance was ended, but the lock file is still held.\n"
+            "Wait a second and open the app again.",
+        )
+        return False
+
+    # Stale lock / dead PID — clear and retry.
+    lock.removeStaleLockFile()  # type: ignore[attr-defined]
+    if lock.tryLock(500):  # type: ignore[attr-defined]
+        return True
+    QMessageBox.warning(
+        None,
+        "ACARS Print Bridge",
+        "ACARS Print Bridge could not start (lock busy).\n"
+        "End any leftover process in Task Manager, then try again.",
+    )
+    _ = app  # keep QApplication alive for the dialog
+    return False
+
+
+def run_app(paths: AppPaths | None = None) -> None:
     from PySide6.QtCore import QLockFile
-    from PySide6.QtWidgets import QMessageBox
 
     resolved = paths or AppPaths.default()
     lock = QLockFile(str(resolved.root / "app.lock"))
-    # Allow Qt to drop locks left by crashed/force-killed processes (PID gone).
-    # setStaleLockTime(0) disables that and strands app.lock forever.
-    lock.setStaleLockTime(5_000)
-    lock.removeStaleLockFile()
-    if not lock.tryLock(100):
-        # Second launch (common with UAC) — keep the first instance only.
-        app = QApplication.instance() or QApplication(sys.argv)
-        QMessageBox.warning(
-            None,
-            "ACARS Print Bridge",
-            "ACARS Print Bridge is already running.\n"
-            "Check the system tray, or end it in Task Manager, then try again.",
-        )
+    if not _acquire_single_instance_lock(lock):
         return
 
     app = QApplication.instance()
@@ -951,4 +1365,9 @@ def run_app(paths: AppPaths | None = None) -> None:
     try:
         app.exec()
     finally:
-        lock.unlock()
+        try:
+            lock.unlock()
+        except Exception:  # noqa: BLE001
+            pass
+        # Absolute last resort if anything non-daemon is still wedged.
+        os._exit(0)
