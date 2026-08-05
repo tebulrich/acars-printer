@@ -26,7 +26,7 @@ class PrinterSettings:
     # None = printer default. Units are ESC/POS 1/180 inch (≈0.14 mm).
     line_spacing_dots: int | None = None
     # Bitmap mode: exact glyph height in printer dots (8 px ≈ 1 mm @ 203 dpi).
-    glyph_px: int = 22
+    glyph_px: int = 28
     line_gap_px: int = 2
     lead_in_lines: int = 2
     tear_feed_lines: int = 6

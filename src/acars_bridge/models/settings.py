@@ -252,17 +252,17 @@ class SettingsStore:
             self.set("print_line_spacing_dots", str(max(1, min(255, value))))
 
     def print_glyph_px(self) -> int:
-        raw = self.get("print_glyph_px", "22")
+        raw = self.get("print_glyph_px", "28")
         try:
-            return max(8, min(64, int(raw or 22)))
+            return max(8, min(64, int(raw or 28)))
         except ValueError:
-            return 22
+            return 28
 
     def set_print_glyph_px(self, px: int | str) -> None:
         try:
             value = int(px)
         except (TypeError, ValueError):
-            value = 22
+            value = 28
         self.set("print_glyph_px", str(max(8, min(64, value))))
 
     def print_line_gap_px(self) -> int:

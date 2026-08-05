@@ -461,6 +461,7 @@ class AcarsBridgeApp(QMainWindow):
 
         print_mode.currentIndexChanged.connect(lambda _i: _sync_print_mode_widgets())
         _sync_print_mode_widgets()
+        self._sync_format_mode_widgets = _sync_print_mode_widgets
 
         help_lbl = QLabel(
             "Change a value, then Save and test print. Compare with a real strip. "
@@ -489,8 +490,16 @@ class AcarsBridgeApp(QMainWindow):
         save_btn.clicked.connect(
             lambda: self._run_action("save_format", self._save_format_settings)
         )
+        reset_btn = QPushButton("Reset to defaults")
+        reset_btn.setToolTip(
+            "Restore format defaults (keeps your printer). Does not print."
+        )
+        reset_btn.clicked.connect(
+            lambda: self._run_action("reset_format", self._reset_format_defaults)
+        )
         footer_row.addWidget(test_btn)
         footer_row.addWidget(save_btn)
+        footer_row.addWidget(reset_btn)
         footer_row.addStretch(1)
         outer.addWidget(footer)
 
@@ -1035,6 +1044,40 @@ class AcarsBridgeApp(QMainWindow):
     def _save_format_and_test(self) -> None:
         self._save_format_settings(quiet=True)
         self._test_print()
+
+    def _reset_format_defaults(self) -> None:
+        """Restore Format controls to shipping defaults (printer destination kept)."""
+        from acars_bridge.printing.bitmap_render import mm_hint
+
+        w = self._format_widgets
+        w["registration"].setText("")
+        width_idx = w["width"].findData("80")
+        if width_idx >= 0:
+            w["width"].setCurrentIndex(width_idx)
+        w["cut"].setCurrentText("on")
+        mode_idx = w["print_mode"].findData("bitmap")
+        if mode_idx >= 0:
+            w["print_mode"].setCurrentIndex(mode_idx)
+        w["print_glyph_px"].setValue(28)
+        w["glyph_hint"].setText(mm_hint(28))
+        w["print_line_gap"].setValue(2)
+        font_idx = w["print_font"].findData("a")
+        if font_idx >= 0:
+            w["print_font"].setCurrentIndex(font_idx)
+        w["print_char_w"].setValue(1)
+        w["print_char_h"].setValue(1)
+        w["print_bold"].setCurrentText("off")
+        cols_idx = w["print_columns"].findData("auto")
+        if cols_idx >= 0:
+            w["print_columns"].setCurrentIndex(cols_idx)
+        w["print_spacing"].setValue(0)
+        w["print_lead_in"].setValue(2)
+        w["print_tear_feed"].setValue(6)
+        sync = getattr(self, "_sync_format_mode_widgets", None)
+        if callable(sync):
+            sync()
+        self._save_format_settings(quiet=True)
+        self._flash("Format reset to defaults (printer unchanged).")
 
     def _save_settings(self) -> None:
         w = self._settings_widgets
