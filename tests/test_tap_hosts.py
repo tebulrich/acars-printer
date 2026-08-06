@@ -20,3 +20,10 @@ def test_render_and_remove_block():
     assert MARKER_END not in cleaned
     assert "localhost" in cleaned
     assert not is_tap_installed(cleaned)
+
+
+def test_render_sayintentions_hosts_only():
+    block = render_block(hosts=("acars.sayintentions.ai",))
+    assert "acars.sayintentions.ai" in block
+    assert "www.hoppie.nl" not in block
+    assert "hoppie.nl" not in block

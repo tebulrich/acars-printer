@@ -4,9 +4,16 @@ from pathlib import Path
 
 from cryptography.fernet import Fernet, InvalidToken
 
-from acars_bridge.config import DEFAULT_POLL_INTERVAL_SECONDS, HOPPIE_DEFAULT_URL
+from acars_bridge.config import DEFAULT_POLL_INTERVAL_SECONDS
 from acars_bridge.hoppie.types import ClientMode
 from acars_bridge.models.db import Database
+from acars_bridge.network import (
+    DEFAULT_NETWORK,
+    AcarsNetwork,
+    NetworkProfile,
+    parse_network,
+    profile_for,
+)
 
 
 class SettingsStore:
@@ -85,8 +92,18 @@ class SettingsStore:
         # Ignore station; always persist observer.
         self.set("client_mode", ClientMode.OBSERVER.value)
 
+    def acars_network(self) -> AcarsNetwork:
+        return parse_network(self.get("acars_network", DEFAULT_NETWORK.value))
+
+    def set_acars_network(self, network: AcarsNetwork | str) -> None:
+        self.set("acars_network", parse_network(network).value)
+
+    def network_profile(self) -> NetworkProfile:
+        return profile_for(self.acars_network())
+
     def hoppie_url(self) -> str:
-        return self.get("hoppie_url", HOPPIE_DEFAULT_URL) or HOPPIE_DEFAULT_URL
+        """Upstream connect.html URL for the selected ACARS network."""
+        return self.network_profile().connect_url
 
     def poll_interval(self) -> int:
         raw = self.get("poll_interval", str(DEFAULT_POLL_INTERVAL_SECONDS))
@@ -102,7 +119,7 @@ class SettingsStore:
         self.set("auto_print", "1" if enabled else "0")
 
     def auto_connect(self) -> bool:
-        """Connect the Hoppie tap automatically when the UI starts."""
+        """Connect the ACARS tap automatically when the UI starts."""
         return (self.get("auto_connect", "1") or "1") in {"1", "true", "yes", "on"}
 
     def set_auto_connect(self, enabled: bool) -> None:

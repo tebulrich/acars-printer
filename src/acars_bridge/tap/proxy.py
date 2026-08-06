@@ -211,7 +211,10 @@ class HoppieForwardProxy:
             except Exception as exc:  # noqa: BLE001
                 self._debug(f"tap parse failed: {exc}")
         except ssl.SSLError as exc:
-            self.last_error = f"TLS handshake failed (CA trust?): {exc}"
+            # Typical when the peer pins the real SI/Hoppie cert or ignores our CA.
+            self.last_error = (
+                f"TLS handshake failed (client rejected MITM cert?): {exc}"
+            )
             self._debug(self.last_error)
         except Exception as exc:  # noqa: BLE001
             self.last_error = str(exc)

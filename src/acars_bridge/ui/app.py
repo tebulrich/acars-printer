@@ -39,6 +39,7 @@ from acars_bridge import __version__
 from acars_bridge.config import AppPaths
 from acars_bridge.hoppie.types import MessageType
 from acars_bridge.models.messages import StoredMessage
+from acars_bridge.network import AcarsNetwork, all_profiles
 from acars_bridge.printing.base import PrinterSettings
 from acars_bridge.printing.discovery import (
     destination_from_label,
@@ -153,7 +154,9 @@ class AcarsBridgeApp(QMainWindow):
         brand_col = QVBoxLayout()
         brand = QLabel("ACARS PRINT BRIDGE")
         brand.setObjectName("Brand")
-        self.subtitle = QLabel("Print bridge · copies what your aircraft gets from Hoppie")
+        self.subtitle = QLabel(
+            "Print bridge · copies what your aircraft gets from the ACARS network"
+        )
         self.subtitle.setObjectName("Subtitle")
         brand_col.addWidget(brand)
         brand_col.addWidget(self.subtitle)
@@ -178,7 +181,7 @@ class AcarsBridgeApp(QMainWindow):
         self.btn_debug = QPushButton("Debug")
         self.btn_debug.clicked.connect(self._show_debug_log)
         self.btn_quit = QPushButton("Quit")
-        self.btn_quit.setToolTip("Exit completely (stops the Hoppie tap)")
+        self.btn_quit.setToolTip("Exit completely (stops the ACARS tap)")
         self.btn_quit.clicked.connect(self._quit_app)
         for btn in (
             self.btn_connect,
@@ -520,6 +523,17 @@ class AcarsBridgeApp(QMainWindow):
         form.setVerticalSpacing(10)
         form.setFieldGrowthPolicy(QFormLayout.FieldGrowthPolicy.ExpandingFieldsGrow)
 
+        network = QComboBox()
+        for profile in all_profiles():
+            network.addItem(profile.label, profile.id.value)
+        current_network = self.session.settings.acars_network().value
+        idx = network.findData(current_network)
+        network.setCurrentIndex(idx if idx >= 0 else 0)
+        network.setToolTip(
+            "Which ACARS host this app intercepts. Must match the aircraft "
+            "(Hoppie logon → Hoppie; SayIntentions API key → SayIntentions)."
+        )
+
         callsign = QLineEdit(self.session.settings.callsign() or "")
         callsign.setPlaceholderText("optional — only print this flight")
 
@@ -549,6 +563,7 @@ class AcarsBridgeApp(QMainWindow):
         ui_scale.setCurrentText(nearest)
 
         self._settings_widgets = {
+            "network": network,
             "callsign": callsign,
             "auto_print": auto_print,
             "auto_connect": auto_connect,
@@ -556,6 +571,7 @@ class AcarsBridgeApp(QMainWindow):
             "ui_scale": ui_scale,
         }
 
+        form.addRow("ACARS network", network)
         form.addRow("Callsign filter", callsign)
         form.addRow("Auto-print", auto_print)
         form.addRow("Auto-connect", auto_connect)
@@ -563,9 +579,11 @@ class AcarsBridgeApp(QMainWindow):
         form.addRow("UI scale", ui_scale)
 
         help_lbl = QLabel(
-            "The aircraft ACARS logon is used as-is (nothing to enter here). "
-            "Printer and strip layout live on the Format tab. Connect as "
-            "Administrator to intercept; Disconnect restores normal Hoppie access."
+            "The aircraft ACARS logon / API key is used as-is (nothing to enter here). "
+            "Match the network to what the plane is configured for. Only flight-sim "
+            "traffic is tapped — the Hoppie website and SayIntentions companion app "
+            "stay on a direct connection. Printer and strip layout live on the Format "
+            "tab. Connect as Administrator to intercept."
         )
         help_lbl.setObjectName("Muted")
         help_lbl.setWordWrap(True)
@@ -641,7 +659,8 @@ class AcarsBridgeApp(QMainWindow):
             return
         if self.tap.status.running:
             filt = self.session.settings.callsign() or "ALL"
-            self._tray.setToolTip(f"ACARS Print Bridge · connected ({filt})")
+            net = self._network_label()
+            self._tray.setToolTip(f"ACARS Print Bridge · {net} connected ({filt})")
         else:
             self._tray.setToolTip("ACARS Print Bridge · disconnected")
 
@@ -815,15 +834,21 @@ class AcarsBridgeApp(QMainWindow):
 
     def _debug_context(self) -> dict[str, Any]:
         settings = self.session.settings
+        profile = settings.network_profile()
         tap = getattr(self, "tap", None)
         return {
             "mode": "tap",
             "hoppie_type": "tap",
+            "acars_network": profile.id.value,
+            "upstream_host": profile.primary_host,
             "callsign": settings.callsign() or "ALL",
             "printer": settings.printer_destination(),
             "running": tap is not None and tap.status.running,
             "exchanges": tap.status.exchanges if tap is not None else 0,
         }
+
+    def _network_label(self) -> str:
+        return self.session.settings.network_profile().label
 
     def _run_action(
         self,
@@ -904,7 +929,12 @@ class AcarsBridgeApp(QMainWindow):
         self._set_link_state("ok", datetime.now(UTC))
         self._update_tray_tooltip()
         note = self.tap.status.last_error
-        self._flash(note if note else "Connected — watching Hoppie traffic from any aircraft")
+        label = self._network_label()
+        self._flash(
+            note
+            if note
+            else f"Connected — watching {label} traffic from any aircraft"
+        )
         self._reload_messages()
 
     def _stop_tap(self) -> None:
@@ -912,7 +942,7 @@ class AcarsBridgeApp(QMainWindow):
         self._sync_connection_buttons(running=False)
         self._set_link_state("off")
         self._update_tray_tooltip()
-        self._flash("Disconnected · Hoppie DNS restored.")
+        self._flash(f"Disconnected · {self._network_label()} tap stopped.")
         self._reload_messages()
 
     @Slot(object)
@@ -1071,6 +1101,14 @@ class AcarsBridgeApp(QMainWindow):
 
     def _save_settings(self) -> None:
         w = self._settings_widgets
+        prev_network = self.session.settings.acars_network()
+        selected = w["network"].currentData()
+        new_network = (
+            AcarsNetwork(selected)
+            if selected in {n.value for n in AcarsNetwork}
+            else AcarsNetwork.HOPPIE
+        )
+        self.session.settings.set_acars_network(new_network)
         self.session.settings.set_callsign(w["callsign"].text().strip())
         self.session.settings.set_auto_print(w["auto_print"].currentText() == "on")
         self.session.settings.set_auto_connect(w["auto_connect"].currentText() == "on")
@@ -1089,6 +1127,12 @@ class AcarsBridgeApp(QMainWindow):
             if isinstance(app, QApplication):
                 apply_theme(app, ui_scale=scale_value)
             notes.append("UI scale applied")
+        if prev_network != new_network and self.tap.status.running:
+            self.tap.stop()
+            self._sync_connection_buttons(running=False)
+            self._set_link_state("off")
+            self._update_tray_tooltip()
+            notes.append("network changed — Connect again")
         suffix = f" · {'; '.join(notes)}" if notes else ""
         self._flash(f"Settings saved{suffix}")
         self._reload_messages()

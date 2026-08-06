@@ -10,14 +10,13 @@ from collections.abc import Callable
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 
+from acars_bridge.network import NetworkProfile
 from acars_bridge.services.session import AppSession
 from acars_bridge.tap.divert import HoppieForceRedirect
 from acars_bridge.tap.extract import messages_from_hoppie_exchange
 from acars_bridge.tap.hosts import install_tap_hosts, remove_tap_hosts
 from acars_bridge.tap.proxy import HoppieForwardProxy, ProxyConfig
 from acars_bridge.tap.tls_certs import ensure_tap_certs, install_ca_trust
-
-UPSTREAM_HOST = "www.hoppie.nl"
 
 
 @dataclass
@@ -29,7 +28,12 @@ class TapStatus:
     exchanges: int = 0
     sniffer_hits: int = 0
     redirects: int = 0
+    passthrough: int = 0
     upstream_ip: str | None = None
+    upstream_ips: tuple[str, ...] = ()
+    upstream_host: str | None = None
+    network_id: str | None = None
+    network_label: str | None = None
     https_enabled: bool = False
     last_mode: str = "tap"
     last_hoppie_type: str = "tap"
@@ -37,7 +41,7 @@ class TapStatus:
 
 
 class TapService:
-    """Catch plane↔Hoppie traffic and print replies (any aircraft client)."""
+    """Catch plane↔ACARS-upstream traffic and print replies (any aircraft client)."""
 
     def __init__(
         self,
@@ -67,34 +71,48 @@ class TapService:
                 if not _is_elevated():
                     raise RuntimeError(
                         "Run this app as Administrator so it can intercept "
-                        "Hoppie traffic from any aircraft on this PC."
+                        "ACARS traffic from any aircraft on this PC."
                     )
 
+                profile = self._session.settings.network_profile()
                 try:
                     remove_tap_hosts()
                 except OSError:
                     pass
                 _flush_dns()
 
-                upstream_ip = _resolve_host(UPSTREAM_HOST)
-                proxy_note, https_ok = self._start_proxy(upstream_ip)
+                upstream_ips = _resolve_host_ips(profile.primary_host)
+                proxy_note, https_ok = self._start_proxy(profile, upstream_ips[0])
 
                 # No raw sniffer — it was counting empty "tap" hits and hiding
                 # real failures. Proxy + WinDivert is the supported path.
                 divert = HoppieForceRedirect(
-                    upstream_ip, redirect_https=https_ok
+                    upstream_ips,
+                    redirect_https=https_ok,
+                    process_allowlist=profile.divert_process_allowlist,
+                    process_denylist=profile.divert_process_denylist,
                 )
                 divert.start()
                 self._divert = divert
                 if not https_ok:
                     note = (
                         "HTTPS intercept off (CA not trusted). "
-                        "HTTP Hoppie clients still work."
+                        "HTTP ACARS clients still work."
                     )
                     proxy_note = f"{proxy_note} | {note}" if proxy_note else note
+                if not profile.hosts_redirect:
+                    coexist = (
+                        f"{profile.label}: sim traffic only "
+                        "(website / companion apps stay direct)"
+                    )
+                    proxy_note = f"{proxy_note} | {coexist}" if proxy_note else coexist
 
                 self.status.running = True
-                self.status.upstream_ip = upstream_ip
+                self.status.upstream_ip = upstream_ips[0]
+                self.status.upstream_ips = upstream_ips
+                self.status.upstream_host = profile.primary_host
+                self.status.network_id = profile.id.value
+                self.status.network_label = profile.label
                 self.status.https_enabled = https_ok
                 self.status.last_error = proxy_note
                 self.status.last_check = datetime.now(UTC)
@@ -107,19 +125,27 @@ class TapService:
                 raise
         self._emit()
 
-    def _start_proxy(self, upstream_ip: str) -> tuple[str | None, bool]:
+    def _start_proxy(
+        self, profile: NetworkProfile, upstream_ip: str
+    ) -> tuple[str | None, bool]:
         """Start forwarder. Returns (status_note, https_mitm_ready)."""
         cert_dir = self._session.paths.root / "tap-certs"
-        ca_cert, server_cert, server_key = ensure_tap_certs(cert_dir)
+        ca_cert, server_cert, server_key = ensure_tap_certs(
+            cert_dir, common_name=profile.primary_host
+        )
         ca_err = install_ca_trust(ca_cert)
         https_ok = ca_err is None
-        install_tap_hosts(redirect_ip="127.0.0.1")
-        self._hosts_owned = True
-        _flush_dns()
+        if profile.hosts_redirect:
+            install_tap_hosts(redirect_ip="127.0.0.1", hosts=profile.tap_hosts)
+            self._hosts_owned = True
+            _flush_dns()
+        else:
+            # Leave DNS alone so companion apps (SayIntentions) keep a direct path.
+            self._hosts_owned = False
         fill_from = (self._session.settings.callsign() or "").strip().upper() or None
         proxy = HoppieForwardProxy(
             ProxyConfig(
-                upstream_host=UPSTREAM_HOST,
+                upstream_host=profile.primary_host,
                 upstream_ip=upstream_ip,
                 server_cert=server_cert,
                 server_key=server_key,
@@ -208,6 +234,9 @@ class TapService:
             exchanges += hits
         if self._divert is not None:
             redirects = self._divert.redirects
+            self.status.passthrough = int(
+                getattr(self._divert, "skipped_passthrough", 0) or 0
+            )
             if self._divert.last_error and not self.status.last_error:
                 self.status.last_error = self._divert.last_error
         self.status.exchanges = exchanges
@@ -245,12 +274,23 @@ class TapService:
 
 
 def _resolve_host(host: str) -> str:
+    ips = _resolve_host_ips(host)
+    return ips[0]
+
+
+def _resolve_host_ips(host: str) -> tuple[str, ...]:
+    """All public IPv4 addresses for *host* (multi-A / CDN-safe)."""
     infos = socket.getaddrinfo(host, 443, type=socket.SOCK_STREAM)
+    seen: list[str] = []
     for info in infos:
         ip = info[4][0]
-        if ip and not ip.startswith("127."):
-            return ip
-    raise RuntimeError(f"Could not resolve {host} to a public IP.")
+        if not ip or ":" in ip or ip.startswith("127."):
+            continue
+        if ip not in seen:
+            seen.append(ip)
+    if not seen:
+        raise RuntimeError(f"Could not resolve {host} to a public IPv4.")
+    return tuple(seen)
 
 
 def _flush_dns(*, timeout: float = 3.0) -> None:

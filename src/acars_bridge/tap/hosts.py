@@ -1,11 +1,15 @@
 from __future__ import annotations
 
 import os
+from collections.abc import Sequence
 from pathlib import Path
+
+from acars_bridge.network import profile_for
 
 MARKER_BEGIN = "# acars-bridge-tap BEGIN"
 MARKER_END = "# acars-bridge-tap END"
-TAP_HOSTS = ("www.hoppie.nl", "hoppie.nl")
+# Default hosts (Hoppie) — prefer passing ``hosts=`` from the active profile.
+TAP_HOSTS = profile_for("hoppie").tap_hosts
 
 
 def hosts_path() -> Path:
@@ -20,21 +24,36 @@ def is_tap_installed(text: str | None = None) -> bool:
     return MARKER_BEGIN in body and MARKER_END in body
 
 
-def render_block(redirect_ip: str = "127.0.0.1") -> str:
-    lines = [MARKER_BEGIN, "# Route Hoppie through ACARS Print Bridge (local forwarder)."]
-    for host in TAP_HOSTS:
+def render_block(
+    redirect_ip: str = "127.0.0.1",
+    *,
+    hosts: Sequence[str] | None = None,
+) -> str:
+    names = tuple(hosts) if hosts is not None else TAP_HOSTS
+    lines = [
+        MARKER_BEGIN,
+        "# Route ACARS upstream through ACARS Print Bridge (local forwarder).",
+    ]
+    for host in names:
         lines.append(f"{redirect_ip} {host}")
     lines.append(MARKER_END)
     return "\n".join(lines) + "\n"
 
 
-def install_tap_hosts(*, redirect_ip: str = "127.0.0.1") -> None:
+def install_tap_hosts(
+    *,
+    redirect_ip: str = "127.0.0.1",
+    hosts: Sequence[str] | None = None,
+) -> None:
     path = hosts_path()
     original = path.read_text(encoding="utf-8", errors="replace") if path.exists() else ""
     cleaned = remove_tap_block(original)
     if not cleaned.endswith("\n"):
         cleaned += "\n"
-    path.write_text(cleaned + "\n" + render_block(redirect_ip), encoding="utf-8")
+    path.write_text(
+        cleaned + "\n" + render_block(redirect_ip, hosts=hosts),
+        encoding="utf-8",
+    )
 
 
 def remove_tap_hosts() -> None:

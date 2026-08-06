@@ -2,13 +2,25 @@
 
 Official API: <https://www.hoppie.nl/acars/system/tech.html>
 
+SayIntentions.AI publishes a drop-in Hoppie-protocol host at
+`https://acars.sayintentions.ai/` (API key instead of Hoppie logon). See
+`acars_bridge.network` — Settings selects which host the local tap intercepts.
+Default remains Hoppie.
+
+**Coexistence (both networks):** no hosts-file redirect; WinDivert only for
+flight-sim processes so the Hoppie website and SI companion app keep a direct
+TLS connection while the sim is tapped.
+
 ## Connections
 
 Hoppie uses short HTTP request/response cycles — not a shared persistent socket.
 
-- **This app (local tap):** redirects `www.hoppie.nl` to itself, forwards each
-  request to the real Hoppie server, and prints reply payloads (including inline
-  `inforeq` weather). No second Hoppie logon. Requires Administrator on Windows.
+- **This app (local tap):** WinDivert reflects flight-sim traffic for the
+  selected ACARS host (`www.hoppie.nl` or `acars.sayintentions.ai`) into a
+  local forwarder, then to the real upstream, and prints reply payloads
+  (including inline `inforeq` weather). No hosts-file redirect, so browsers
+  and companion apps stay direct. No second station logon. Requires
+  Administrator on Windows.
 - **Aircraft client:** still owns the callsign via `poll` and sends weather /
   telex / CPDLC. This print bridge does not send; it only copies.
 
