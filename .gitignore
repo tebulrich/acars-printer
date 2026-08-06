@@ -27,3 +27,5 @@ settings.key
 debug.log
 tap-certs/
 **/tap-certs/
+
+*.mdc
