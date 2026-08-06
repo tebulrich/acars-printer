@@ -11,8 +11,13 @@ def test_stylesheet_covers_buttons_without_canvas_hacks():
 
 
 def test_apply_theme_sets_fusion_and_font(qapp):
-    apply_theme(qapp, ui_scale=1.0)
+    apply_theme(qapp)
     assert qapp.style() is not None
     assert qapp.styleSheet()
     assert "QPushButton" in qapp.styleSheet()
     assert qapp.font().pointSize() >= 10
+    from PySide6.QtWidgets import QStyle
+
+    assert (
+        qapp.style().styleHint(QStyle.StyleHint.SH_ToolTip_WakeUpDelay) == 200
+    )

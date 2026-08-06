@@ -28,6 +28,7 @@ from PySide6.QtWidgets import (
     QPlainTextEdit,
     QPushButton,
     QScrollArea,
+    QSizePolicy,
     QSpinBox,
     QSystemTrayIcon,
     QTabWidget,
@@ -49,7 +50,7 @@ from acars_bridge.printing.discovery import (
 from acars_bridge.services.debug_log import DebugLog
 from acars_bridge.services.session import AppSession, build_session
 from acars_bridge.tap.service import TapService, TapStatus
-from acars_bridge.ui.icons import make_app_icon
+from acars_bridge.ui.icons import make_app_icon, make_brand_pixmap
 from acars_bridge.ui.notifications import notify
 from acars_bridge.ui.theme import COLORS, apply_theme, mono_font
 from acars_bridge.ui.updates import UpdateController
@@ -76,7 +77,7 @@ class AcarsBridgeApp(QMainWindow):
         self._settings_widgets: dict[str, Any] = {}
 
         self.setWindowTitle(f"ACARS Print Bridge  ·  {__version__}")
-        self.setMinimumSize(720, 520)
+        self.setMinimumSize(780, 560)
         self.resize(900, 600)
         self._app_icon = make_app_icon()
         self.setWindowIcon(self._app_icon)
@@ -148,26 +149,36 @@ class AcarsBridgeApp(QMainWindow):
     def _build_header(self) -> QWidget:
         header = QFrame()
         header.setObjectName("Header")
-        row = QHBoxLayout(header)
-        row.setContentsMargins(18, 14, 16, 14)
+        col = QVBoxLayout(header)
+        col.setContentsMargins(18, 12, 16, 10)
+        col.setSpacing(8)
 
-        brand_col = QVBoxLayout()
+        brand_row = QHBoxLayout()
+        brand_row.setSpacing(10)
+
+        brand_mark = QLabel()
+        brand_mark.setObjectName("BrandMark")
+        brand_pix = make_brand_pixmap(32)
+        if not brand_pix.isNull():
+            brand_mark.setPixmap(brand_pix)
+            brand_mark.setFixedSize(32, 32)
+        brand_row.addWidget(brand_mark, alignment=Qt.AlignmentFlag.AlignVCenter)
+
         brand = QLabel("ACARS PRINT BRIDGE")
         brand.setObjectName("Brand")
-        self.subtitle = QLabel(
-            "Print bridge · copies what your aircraft gets from the ACARS network"
-        )
-        self.subtitle.setObjectName("Subtitle")
-        brand_col.addWidget(brand)
-        brand_col.addWidget(self.subtitle)
-        row.addLayout(brand_col)
-        row.addStretch(1)
+        brand.setSizePolicy(QSizePolicy.Policy.Minimum, QSizePolicy.Policy.Preferred)
+        brand_row.addWidget(brand, alignment=Qt.AlignmentFlag.AlignVCenter)
+        brand_row.addStretch(1)
+
+        action_row = QHBoxLayout()
+        action_row.setSpacing(8)
 
         self.callsign_chip = self._chip("FLT —")
         self.link_chip = self._chip("LINK off")
         self.clock_chip = self._chip("UTC —")
         for chip in (self.callsign_chip, self.link_chip, self.clock_chip):
-            row.addWidget(chip)
+            action_row.addWidget(chip)
+        action_row.addStretch(1)
 
         self.btn_connect = QPushButton("Connect")
         self.btn_connect.setObjectName("Primary")
@@ -189,7 +200,10 @@ class AcarsBridgeApp(QMainWindow):
             self.btn_debug,
             self.btn_quit,
         ):
-            row.addWidget(btn)
+            action_row.addWidget(btn)
+
+        col.addLayout(brand_row)
+        col.addLayout(action_row)
         self._sync_connection_buttons(running=False)
         return header
 
@@ -295,15 +309,10 @@ class AcarsBridgeApp(QMainWindow):
         scroll.setFrameShape(QFrame.Shape.NoFrame)
         scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
 
-        form_host = QWidget()
-        form = QFormLayout(form_host)
-        form.setContentsMargins(16, 16, 16, 12)
-        form.setHorizontalSpacing(18)
-        form.setVerticalSpacing(10)
-        form.setFieldGrowthPolicy(QFormLayout.FieldGrowthPolicy.ExpandingFieldsGrow)
-
-        registration = QLineEdit(self.session.settings.aircraft_registration() or "")
-        registration.setPlaceholderText("optional — e.g. D-AILA (omit if empty)")
+        page = QWidget()
+        page_layout = QVBoxLayout(page)
+        page_layout.setContentsMargins(16, 16, 16, 12)
+        page_layout.setSpacing(14)
 
         printer = QComboBox()
         labels = [c.label for c in self._printer_choices]
@@ -418,7 +427,6 @@ class AcarsBridgeApp(QMainWindow):
         glyph_layout.addWidget(glyph_hint, stretch=1)
 
         self._format_widgets = {
-            "registration": registration,
             "printer": printer,
             "width": width,
             "cut": cut,
@@ -436,21 +444,30 @@ class AcarsBridgeApp(QMainWindow):
             "glyph_hint": glyph_hint,
         }
 
-        form.addRow("Aircraft registration", registration)
-        form.addRow("Printer", printer)
-        form.addRow("Paper width", width)
-        form.addRow("Cut / tear assist", cut)
-        form.addRow("Print mode", print_mode)
-        form.addRow("Text height", glyph_row)
-        form.addRow("Space between lines", print_line_gap)
-        form.addRow("Print font (built-in)", print_font)
-        form.addRow("Char width ×", print_char_w)
-        form.addRow("Char height ×", print_char_h)
-        form.addRow("Line spacing (dots)", print_spacing)
-        form.addRow("Print bold", print_bold)
-        form.addRow("Columns (wrap)", print_columns)
-        form.addRow("Top margin", print_lead_in)
-        form.addRow("Bottom feed", print_tear_feed)
+        columns = QHBoxLayout()
+        columns.setSpacing(28)
+
+        left = self._form_column("PRINTER")
+        left.addRow("Printer", printer)
+        left.addRow("Paper width", width)
+        left.addRow("Cut / tear assist", cut)
+        left.addRow("Print mode", print_mode)
+        left.addRow("Text height", glyph_row)
+        left.addRow("Space between lines", print_line_gap)
+
+        right = self._form_column("TYPE & MARGINS")
+        right.addRow("Print font (built-in)", print_font)
+        right.addRow("Char width ×", print_char_w)
+        right.addRow("Char height ×", print_char_h)
+        right.addRow("Line spacing (dots)", print_spacing)
+        right.addRow("Print bold", print_bold)
+        right.addRow("Columns (wrap)", print_columns)
+        right.addRow("Top margin", print_lead_in)
+        right.addRow("Bottom feed", print_tear_feed)
+
+        self._add_form_column(columns, left)
+        self._add_form_column(columns, right)
+        page_layout.addLayout(columns)
 
         def _sync_print_mode_widgets() -> None:
             bitmap = str(print_mode.currentData() or "bitmap") == "bitmap"
@@ -467,15 +484,15 @@ class AcarsBridgeApp(QMainWindow):
         self._sync_format_mode_widgets = _sync_print_mode_widgets
 
         help_lbl = QLabel(
-            "Change a value, then Save and test print. Compare with a real strip. "
-            "Exact size: Text height 8 ≈ 1 mm on a typical POS-80 — if letters look "
-            "~1 mm too tall, try 16–18."
+            "Change a value, then Save and test print. Exact size: Text height 8 ≈ 1 mm "
+            "on a typical POS-80 — if letters look ~1 mm too tall, try 16–18."
         )
         help_lbl.setObjectName("Muted")
         help_lbl.setWordWrap(True)
-        form.addRow(help_lbl)
+        page_layout.addWidget(help_lbl)
+        page_layout.addStretch(1)
 
-        scroll.setWidget(form_host)
+        scroll.setWidget(page)
         outer.addWidget(scroll, stretch=1)
 
         footer = QFrame()
@@ -516,12 +533,10 @@ class AcarsBridgeApp(QMainWindow):
         scroll.setFrameShape(QFrame.Shape.NoFrame)
         scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
 
-        form_host = QWidget()
-        form = QFormLayout(form_host)
-        form.setContentsMargins(16, 16, 16, 12)
-        form.setHorizontalSpacing(18)
-        form.setVerticalSpacing(10)
-        form.setFieldGrowthPolicy(QFormLayout.FieldGrowthPolicy.ExpandingFieldsGrow)
+        page = QWidget()
+        page_layout = QVBoxLayout(page)
+        page_layout.setContentsMargins(16, 16, 16, 12)
+        page_layout.setSpacing(14)
 
         network = QComboBox()
         for profile in all_profiles():
@@ -535,7 +550,12 @@ class AcarsBridgeApp(QMainWindow):
         )
 
         callsign = QLineEdit(self.session.settings.callsign() or "")
-        callsign.setPlaceholderText("optional — only print this flight")
+        callsign.setPlaceholderText("")
+        callsign.setToolTip("Optional — only print this flight")
+
+        registration = QLineEdit(self.session.settings.aircraft_registration() or "")
+        registration.setPlaceholderText("")
+        registration.setToolTip("Optional — e.g. D-AILA (shown on the print header)")
 
         auto_print = QComboBox()
         auto_print.addItems(["on", "off"])
@@ -553,43 +573,43 @@ class AcarsBridgeApp(QMainWindow):
             "on" if self.session.settings.check_updates() else "off"
         )
 
-        ui_scale = QComboBox()
-        ui_scale.addItems(["85%", "100%", "115%", "125%"])
-        scale = self.session.settings.ui_scale()
-        nearest = min(
-            [(0.85, "85%"), (1.0, "100%"), (1.15, "115%"), (1.25, "125%")],
-            key=lambda item: abs(item[0] - scale),
-        )[1]
-        ui_scale.setCurrentText(nearest)
-
         self._settings_widgets = {
             "network": network,
             "callsign": callsign,
+            "registration": registration,
             "auto_print": auto_print,
             "auto_connect": auto_connect,
             "check_updates": check_updates,
-            "ui_scale": ui_scale,
         }
 
-        form.addRow("ACARS network", network)
-        form.addRow("Callsign filter", callsign)
-        form.addRow("Auto-print", auto_print)
-        form.addRow("Auto-connect", auto_connect)
-        form.addRow("Check for updates", check_updates)
-        form.addRow("UI scale", ui_scale)
+        columns = QHBoxLayout()
+        columns.setSpacing(28)
+
+        left = self._form_column("ACARS / FLIGHT")
+        left.addRow("Network", network)
+        left.addRow("Callsign filter", callsign)
+        left.addRow("Aircraft registration", registration)
+
+        right = self._form_column("APP")
+        right.addRow("Auto-print", auto_print)
+        right.addRow("Auto-connect", auto_connect)
+        right.addRow("Check for updates", check_updates)
+
+        self._add_form_column(columns, left)
+        self._add_form_column(columns, right)
+        page_layout.addLayout(columns)
 
         help_lbl = QLabel(
-            "The aircraft ACARS logon / API key is used as-is (nothing to enter here). "
-            "Match the network to what the plane is configured for. Only flight-sim "
-            "traffic is tapped — the Hoppie website and SayIntentions companion app "
-            "stay on a direct connection. Printer and strip layout live on the Format "
-            "tab. Connect as Administrator to intercept."
+            "Aircraft logon / API key stays in the plane. Match Network to that setup. "
+            "Callsign filter limits which flight prints; registration appears on the strip header. "
+            "Printer layout is on the Format tab."
         )
         help_lbl.setObjectName("Muted")
         help_lbl.setWordWrap(True)
-        form.addRow(help_lbl)
+        page_layout.addWidget(help_lbl)
+        page_layout.addStretch(1)
 
-        scroll.setWidget(form_host)
+        scroll.setWidget(page)
         outer.addWidget(scroll, stretch=1)
 
         footer = QFrame()
@@ -608,6 +628,33 @@ class AcarsBridgeApp(QMainWindow):
         footer_row.addWidget(check_btn)
         footer_row.addStretch(1)
         outer.addWidget(footer)
+
+    def _form_column(self, section: str) -> QFormLayout:
+        """Labeled form column for two-column Settings / Format layouts."""
+        host = QWidget()
+        host.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Preferred)
+        col = QVBoxLayout(host)
+        col.setContentsMargins(0, 0, 0, 0)
+        col.setSpacing(8)
+        heading = QLabel(section)
+        heading.setObjectName("Section")
+        col.addWidget(heading)
+        form = QFormLayout()
+        form.setContentsMargins(0, 0, 0, 0)
+        form.setHorizontalSpacing(14)
+        form.setVerticalSpacing(8)
+        form.setFieldGrowthPolicy(QFormLayout.FieldGrowthPolicy.ExpandingFieldsGrow)
+        col.addLayout(form)
+        col.addStretch(1)
+        form._column_host = host  # type: ignore[attr-defined]
+        return form
+
+    def _add_form_column(self, columns: QHBoxLayout, form: QFormLayout) -> None:
+        host = getattr(form, "_column_host", None)
+        if isinstance(host, QWidget):
+            columns.addWidget(host, stretch=1)
+        else:
+            columns.addLayout(form, stretch=1)
 
     def _setup_tray(self) -> None:
         # Tray is a convenience only. Elevated Windows apps often lose the
@@ -1033,7 +1080,6 @@ class AcarsBridgeApp(QMainWindow):
 
     def _save_format_settings(self, *, quiet: bool = False) -> None:
         w = self._format_widgets
-        self.session.settings.set_aircraft_registration(w["registration"].text().strip())
         printer_label = w["printer"].currentText().strip() or "console (log only)"
         self.session.settings.set_printer_destination(
             destination_from_label(printer_label, self._printer_choices)
@@ -1070,7 +1116,6 @@ class AcarsBridgeApp(QMainWindow):
         from acars_bridge.printing.bitmap_render import mm_hint
 
         w = self._format_widgets
-        w["registration"].setText("")
         width_idx = w["width"].findData("80")
         if width_idx >= 0:
             w["width"].setCurrentIndex(width_idx)
@@ -1110,23 +1155,17 @@ class AcarsBridgeApp(QMainWindow):
         )
         self.session.settings.set_acars_network(new_network)
         self.session.settings.set_callsign(w["callsign"].text().strip())
+        self.session.settings.set_aircraft_registration(
+            w["registration"].text().strip()
+        )
         self.session.settings.set_auto_print(w["auto_print"].currentText() == "on")
         self.session.settings.set_auto_connect(w["auto_connect"].currentText() == "on")
         self.session.settings.set_check_updates(
             w["check_updates"].currentText() == "on"
         )
-        scale_value = {"85%": 0.85, "100%": 1.0, "115%": 1.15, "125%": 1.25}.get(
-            w["ui_scale"].currentText(), 1.0
-        )
-        prev_scale = self.session.settings.ui_scale()
-        self.session.settings.set_ui_scale(scale_value)
+        self.session.rebuild_printer()
         notes: list[str] = []
         self._refresh_header()
-        if abs(prev_scale - scale_value) > 0.001:
-            app = QApplication.instance()
-            if isinstance(app, QApplication):
-                apply_theme(app, ui_scale=scale_value)
-            notes.append("UI scale applied")
         if prev_network != new_network and self.tap.status.running:
             self.tap.stop()
             self._sync_connection_buttons(running=False)
@@ -1430,7 +1469,7 @@ def run_app(paths: AppPaths | None = None) -> None:
     assert isinstance(app, QApplication)
 
     session = build_session(resolved)
-    apply_theme(app, ui_scale=session.settings.ui_scale())
+    apply_theme(app)
     app.setWindowIcon(make_app_icon())
     window = AcarsBridgeApp(session)
     window.show()

@@ -155,19 +155,12 @@ class SettingsStore:
         self.set("paper_width", "58" if str(width) == "58" else "80")
 
     def ui_scale(self) -> float:
-        """User multiplier on top of OS DPI (1.0 = system only)."""
-        raw = self.get("ui_scale", "1.0")
-        try:
-            return max(0.85, min(1.5, float(raw or 1.0)))
-        except ValueError:
-            return 1.0
+        """Fixed at 100% — OS DPI only."""
+        return 1.0
 
     def set_ui_scale(self, scale: float | str) -> None:
-        try:
-            value = float(scale)
-        except (TypeError, ValueError):
-            value = 1.0
-        self.set("ui_scale", f"{max(0.85, min(1.5, value)):.2f}")
+        # Kept for older settings DBs; UI scale is no longer configurable.
+        self.set("ui_scale", "1.00")
 
     def cut_enabled(self) -> bool:
         # Default on: thermal POS needs feed-to-tear-bar after each receipt.

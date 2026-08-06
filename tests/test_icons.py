@@ -1,13 +1,16 @@
 from __future__ import annotations
 
-from acars_bridge.ui.icons import icon_rgba, make_app_icon, rgba_png, write_ico
+from acars_bridge.ui.icons import icon_rgba, logo_path, make_app_icon, rgba_png, write_ico
 
 
-def test_icon_rgba_size_and_alpha():
+def test_logo_asset_exists():
+    assert logo_path().is_file()
+
+
+def test_icon_rgba_size():
     raw = icon_rgba(32)
     assert len(raw) == 32 * 32 * 4
-    # Corner should be transparent; center panel opaque.
-    assert raw[3] == 0
+    # Full-bleed brand mark — center pixel should be opaque.
     mid = ((16 * 32 + 16) * 4) + 3
     assert raw[mid] == 255
 
@@ -30,3 +33,15 @@ def test_make_app_icon_non_null():
     assert not icon.isNull()
     assert icon.availableSizes()
     assert app is not None
+
+
+def test_make_brand_pixmap():
+    from PySide6.QtWidgets import QApplication
+
+    from acars_bridge.ui.icons import make_brand_pixmap
+
+    _app = QApplication.instance() or QApplication([])
+    pix = make_brand_pixmap(36)
+    assert not pix.isNull()
+    assert pix.width() == 36
+    assert pix.height() == 36

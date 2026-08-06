@@ -1,9 +1,32 @@
 from __future__ import annotations
 
 from PySide6.QtGui import QFont, QFontDatabase
-from PySide6.QtWidgets import QApplication
+from PySide6.QtWidgets import (
+    QApplication,
+    QProxyStyle,
+    QStyle,
+    QStyleHintReturn,
+    QStyleOption,
+    QWidget,
+)
 
 from acars_bridge.ui.system_fonts import preferred_mono_font, preferred_ui_font
+
+# Default Qt wake-up is ~700 ms; keep tooltips snappy for field hints.
+_TOOLTIP_WAKE_MS = 200
+
+
+class _FastToolTipStyle(QProxyStyle):
+    def styleHint(
+        self,
+        hint: QStyle.StyleHint,
+        option: QStyleOption | None = None,
+        widget: QWidget | None = None,
+        returnData: QStyleHintReturn | None = None,
+    ) -> int:
+        if hint == QStyle.StyleHint.SH_ToolTip_WakeUpDelay:
+            return _TOOLTIP_WAKE_MS
+        return super().styleHint(hint, option, widget, returnData)
 
 COLORS = {
     "bg": "#12161c",
@@ -31,8 +54,12 @@ def app_stylesheet() -> str:
     QMainWindow, QDialog {{
         background-color: {c["bg"]};
     }}
-    QFrame#Header, QFrame#Compose, QFrame#Panel, QFrame#Detail, QFrame#SettingsFooter {{
+    QFrame#Compose, QFrame#Panel, QFrame#Detail, QFrame#SettingsFooter {{
         background-color: {c["panel"]};
+        border: none;
+    }}
+    QFrame#Header {{
+        background-color: transparent;
         border: none;
     }}
     QFrame#SettingsFooter {{
@@ -46,9 +73,15 @@ def app_stylesheet() -> str:
         color: {c["text"]};
     }}
     QLabel#Brand {{
-        font-size: 20px;
+        font-size: 16px;
         font-weight: 700;
         color: {c["text"]};
+        background: transparent;
+    }}
+    QLabel#BrandMark {{
+        background: transparent;
+        border: none;
+        padding: 0;
     }}
     QLabel#Subtitle, QLabel#Muted, QLabel#Toast {{
         color: {c["muted"]};
@@ -63,6 +96,13 @@ def app_stylesheet() -> str:
     QLabel#Title {{
         font-size: 16px;
         font-weight: 700;
+    }}
+    QLabel#Section {{
+        font-size: 12px;
+        font-weight: 700;
+        letter-spacing: 0.06em;
+        color: {c["muted"]};
+        padding: 0 0 2px 0;
     }}
     QPushButton {{
         background-color: {c["panel_alt"]};
@@ -184,9 +224,9 @@ def app_stylesheet() -> str:
     """
 
 
-def apply_theme(app: QApplication, *, ui_scale: float = 1.0) -> None:
-    """Apply cockpit QSS + OS UI font. Qt handles DPI natively."""
-    app.setStyle("Fusion")
+def apply_theme(app: QApplication) -> None:
+    """Apply cockpit QSS + OS UI font. Qt handles DPI natively at 100%."""
+    app.setStyle(_FastToolTipStyle("Fusion"))
     app.setStyleSheet(app_stylesheet())
 
     ui_family = _first_available_family(
@@ -208,9 +248,7 @@ def apply_theme(app: QApplication, *, ui_scale: float = 1.0) -> None:
         "Monospace",
     )
 
-    scale = max(0.85, min(1.5, float(ui_scale)))
-    point_size = max(10, int(round(11 * scale)))
-    font = QFont(ui_family, point_size)
+    font = QFont(ui_family, 11)
     font.setHintingPreference(QFont.HintingPreference.PreferFullHinting)
     app.setFont(font)
 

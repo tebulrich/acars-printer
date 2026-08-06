@@ -16,6 +16,8 @@ windivert = root / "third_party" / "WinDivert" / "WinDivert-2.2.2-A" / "x64"
 
 escpos_datas = collect_data_files("escpos")
 divert_datas = collect_data_files("pydivert", includes=["**/*.dll", "**/*.sys"])
+logo_png = root / "src" / "acars_bridge" / "ui" / "assets" / "app-logo.png"
+logo_datas = [(str(logo_png), "acars_bridge/ui/assets")] if logo_png.exists() else []
 
 wd_datas = []
 if windivert.exists():
@@ -132,7 +134,7 @@ a = Analysis(
     [str(root / "src" / "acars_bridge" / "__main__.py")],
     pathex=[str(root / "src")],
     binaries=[],
-    datas=escpos_datas + divert_datas + wd_datas,
+    datas=escpos_datas + divert_datas + wd_datas + logo_datas,
     hiddenimports=[
         "pydivert",
         "acars_bridge",

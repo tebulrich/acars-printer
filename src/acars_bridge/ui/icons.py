@@ -1,80 +1,34 @@
-"""App / tray icon — simple dark panel with a teal print strip (no image assets)."""
+"""App / tray icon — plane + datalink print mark from packaged PNG."""
 
 from __future__ import annotations
 
 import struct
 import zlib
+from functools import lru_cache
 from pathlib import Path
 
 
-# Match ui/theme.py accents without importing Qt here (used by packaging too).
-_PANEL = (26, 33, 43, 255)  # #1a212b
-_TEAL = (61, 214, 198, 255)  # #3dd6c6
-_AMBER = (244, 162, 97, 255)  # #f4a261
-_CLEAR = (0, 0, 0, 0)
+_LOGO_NAME = "app-logo.png"
+_ICON_SIZES = (16, 20, 24, 32, 48, 64, 128, 256)
 
 
+def logo_path() -> Path:
+    return Path(__file__).resolve().parent / "assets" / _LOGO_NAME
+
+
+@lru_cache(maxsize=16)
 def icon_rgba(size: int) -> bytes:
-    """RGBA pixels for a square icon: rounded dark tile + receipt lines."""
-    pixels = bytearray(size * size * 4)
-    margin = max(1, size // 16)
-    radius = max(2, size // 6)
-    # Receipt strip geometry (relative).
-    strip_left = size * 28 // 100
-    strip_right = size * 72 // 100
-    strip_top = size * 22 // 100
-    strip_bottom = size * 78 // 100
-    line_count = 4 if size >= 24 else 3
-    gap = max(1, (strip_bottom - strip_top) // (line_count * 2))
-    line_h = max(1, size // 16)
-    accent_y0 = size * 78 // 100
-    accent_y1 = size * 86 // 100
+    """RGBA pixels for a square icon, scaled from the brand logo."""
+    from PIL import Image
 
-    def put(x: int, y: int, rgba: tuple[int, int, int, int]) -> None:
-        i = (y * size + x) * 4
-        pixels[i : i + 4] = bytes(rgba)
-
-    def inside_rounded(x: int, y: int) -> bool:
-        if not (margin <= x < size - margin and margin <= y < size - margin):
-            return False
-        # Squircle corners via distance to nearest inner corner.
-        ix0, iy0 = margin + radius, margin + radius
-        ix1, iy1 = size - margin - radius - 1, size - margin - radius - 1
-        cx = min(max(x, ix0), ix1)
-        cy = min(max(y, iy0), iy1)
-        if x < ix0 and y < iy0:
-            return (x - ix0) ** 2 + (y - iy0) ** 2 <= radius * radius
-        if x > ix1 and y < iy0:
-            return (x - ix1) ** 2 + (y - iy0) ** 2 <= radius * radius
-        if x < ix0 and y > iy1:
-            return (x - ix0) ** 2 + (y - iy1) ** 2 <= radius * radius
-        if x > ix1 and y > iy1:
-            return (x - ix1) ** 2 + (y - iy1) ** 2 <= radius * radius
-        return True
-
-    for y in range(size):
-        for x in range(size):
-            if not inside_rounded(x, y):
-                put(x, y, _CLEAR)
-                continue
-            # Amber footer tick (printer head / status).
-            if accent_y0 <= y <= accent_y1 and strip_left <= x <= strip_right:
-                put(x, y, _AMBER)
-                continue
-            # Teal receipt lines.
-            painted = False
-            for n in range(line_count):
-                ly = strip_top + n * (line_h + gap)
-                if ly <= y < ly + line_h and strip_left <= x <= strip_right:
-                    # Slightly shorter alternating lines (looks like text).
-                    inset = (n % 2) * max(1, (strip_right - strip_left) // 8)
-                    if strip_left + inset <= x <= strip_right - inset:
-                        put(x, y, _TEAL)
-                        painted = True
-                        break
-            if not painted:
-                put(x, y, _PANEL)
-    return bytes(pixels)
+    path = logo_path()
+    if not path.is_file():
+        raise FileNotFoundError(f"App logo missing: {path}")
+    with Image.open(path) as image:
+        rgba = image.convert("RGBA")
+        if rgba.size != (size, size):
+            rgba = rgba.resize((size, size), Image.Resampling.LANCZOS)
+        return rgba.tobytes()
 
 
 def rgba_png(width: int, height: int, rgba: bytes) -> bytes:
@@ -137,3 +91,19 @@ def make_app_icon():
         if pix.loadFromData(png, "PNG"):
             icon.addPixmap(pix)
     return icon
+
+
+def make_brand_pixmap(size: int = 36):
+    """Header mark next to the product name."""
+    from PySide6.QtCore import Qt
+    from PySide6.QtGui import QPixmap
+
+    pix = QPixmap(str(logo_path()))
+    if pix.isNull():
+        return QPixmap()
+    return pix.scaled(
+        size,
+        size,
+        Qt.AspectRatioMode.KeepAspectRatio,
+        Qt.TransformationMode.SmoothTransformation,
+    )
