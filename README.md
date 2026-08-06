@@ -30,10 +30,11 @@ Only ACARS traffic from the flight sim is printed. You can browse
 [hoppie.nl](https://www.hoppie.nl/acars/) or keep the SayIntentions companion
 app open at the same time.
 
-It currently does **not** work with **PMDG** or **Fenix** products. Those
-clients talk to a vendor cloud / datalink service instead of sending ACARS
-requests from this PC to Hoppie or SayIntentions, so the bridge never sees the
-traffic.
+It currently does **not** print **ACARS** from **PMDG** or **Fenix** products.
+Those clients talk to a vendor cloud / datalink service instead of sending ACARS
+requests from this PC to Hoppie or SayIntentions, so the bridge never sees that
+traffic. **SimBrief flight plan and loadsheet printing still works** on those
+aircraft when SimBrief is enabled in Settings.
 
 ## How to use
 
@@ -126,7 +127,8 @@ Click **Disconnect**, then close the app.
 
 ## SimBrief OFP + loadsheets
 
-Optional companion to ACARS printing (inspired by SimPrinter). When enabled:
+Optional companion to ACARS printing (inspired by SimPrinter). Works even on
+aircraft where ACARS tap does not (e.g. PMDG, Fenix). When enabled:
 
 1. Polls SimBrief about once a minute for a **new eligible OFP** (new `ofp_id`,
    scheduled out in the future or within ~60 minutes past).
