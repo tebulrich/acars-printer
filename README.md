@@ -81,6 +81,7 @@ Open the **Settings** tab:
 | Auto-connect | On by default - Connects when the app starts (still needs Administrator). |
 | Check for updates | On by default - looks for a newer GitHub release and offers one-click install of the Windows exe. |
 | Sterile until | APP section. Mutes thermal prints (ACARS + SimBrief) while airborne below this AGL, or on the ground at ≥40 kt. Queued strips flush when sterile ends. Needs SimConnect (MSFS). Default 1500 ft. |
+| Only when powered | APP section (off by default). When on, queue ACARS/SimBrief prints until SimConnect sees a battery master ON. If MSFS is not connected, prints are not held. |
 | SimBrief | Enable + username/pilot ID to auto-print flight plan and loadsheets. See [SimBrief](#simbrief-ofp--loadsheets). |
 
 Click **Save settings**. Put the logon / API key and flight callsign in the
@@ -95,8 +96,10 @@ app only watches and prints.
 4. Printed copies should appear on the printer; the Messages list shows what was
    stored.
 
-Header chips show callsign, LINK, **STERILE**, OFP status, and SIM/UTC Zulu.
-**Print OFP** / **Unlock OFP** fetch or clear the locked SimBrief plan.
+Header chips show callsign, LINK, **STERILE** (or **PWR wait** when Only when
+powered is holding prints), OFP status, and SIM/UTC Zulu.
+**Print OFP** fetches the latest plan; **Unlock** clears the lock and allows the
+same OFP to lock again on the next poll.
 
 **Refresh** reloads the message list and bridge status. **Debug** is only for
 troubleshooting (do not paste secrets into public chats - the log redacts
@@ -120,6 +123,8 @@ Click **Disconnect**, then close the app.
   be printed this way (see [Compatibility](#compatibility), e.g. PMDG, Fenix).
 - **STERILE on?** Below your sterile AGL or taxiing ≥40 kt, prints queue and
   release when sterile ends (needs SimConnect connected).
+- **PWR wait?** Only when powered is on and battery is off — prints queue until
+  a battery master comes on.
 
 ## SimBrief OFP + loadsheets
 
@@ -129,18 +134,21 @@ Optional companion to ACARS printing (inspired by SimPrinter). When enabled:
    scheduled out in the future or within ~60 minutes past).
 2. On lock: prints **flight plan** + **preliminary** loadsheet (full route).
 3. **Final** loadsheet at the earlier of T−5 before SOBT (sim Zulu if
-   SimConnect is up, else wall UTC) or taxi GS 3–40 kt — never while sterile.
+   SimConnect is up, else wall UTC) or ~10 s continuous taxi GS 3–40 kt on the
+   ground — never while sterile or (if enabled) battery off.
 4. If takeoff happens without a final, prints the missed final **once after
    landing** (not in climb).
 5. Unlocks after landing + grace (default 10 minutes), or earlier on a new OFP /
-   Unlock / max lock (8 h).
+   Unlock / max lock (8 h). Manual Unlock also forgets the last OFP id so the
+   same plan can auto-lock again.
 
 **Print OFP** forces FP + prelim + final for the latest plan (deferred if
-sterile). Mid-flight app restarts restore the locked OFP from settings so final /
-missed-final logic can continue.
+sterile or Only when powered). Mid-flight app restarts restore the locked OFP
+from settings so final / missed-final logic can continue.
 
-Requires a SimBrief username or numeric pilot ID. SimConnect DLLs ship under
-`third_party/SimConnect` for MSFS sterile timing and the SIM clock chip.
+Requires a SimBrief username or numeric pilot ID. A MSFS 2024 `SimConnect.dll`
+ships under `third_party/SimConnect` for sterile timing, power gating, and the
+SIM clock chip (runs in-process in the main app).
 
 ## Requirements
 
