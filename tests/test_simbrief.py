@@ -48,6 +48,20 @@ def test_eligibility_future_and_stale(sample_plan: SimBriefFlightPlan) -> None:
     assert is_eligible_for_autoprint(sample_plan, now=near, last_ofp_id=None)
 
 
+def test_manual_unlock_forgets_last_ofp(app_session, sample_plan: SimBriefFlightPlan) -> None:
+    app_session.settings.set_simbrief_last_ofp_id(sample_plan.ofp_id)
+    watcher = SimBriefWatcher(
+        settings=app_session.settings,
+        print_manager=app_session.print_manager,
+        sterile=app_session.sterile,
+    )
+    watcher.unlock(reason="manual")
+    assert app_session.settings.simbrief_last_ofp_id() is None
+    watcher.settings.set_simbrief_last_ofp_id(sample_plan.ofp_id)
+    watcher.unlock(reason="post-landing grace done")
+    assert app_session.settings.simbrief_last_ofp_id() == sample_plan.ofp_id
+
+
 def test_loadsheet_math_and_randomize(sample_plan: SimBriefFlightPlan) -> None:
     prelim = build_preliminary_values(sample_plan)
     assert prelim.pax_count == 150
@@ -65,6 +79,8 @@ def test_tickets_keep_full_route(sample_plan: SimBriefFlightPlan) -> None:
     sheet = render_loadsheet_ticket(sample_plan, "PRELIMINARY", prelim, width=32)
     assert "LOAD SHEET" in sheet
     assert "PRELIMINARY" in sheet
+    assert "ACARS START" in sheet
+    assert "ACARS END" in sheet
 
 
 def test_sterile_compute() -> None:
@@ -120,11 +136,71 @@ def test_sterile_defers_and_flushes() -> None:
     assert gate.is_sterile
     deferred = gate.run_or_defer_acars(lambda: ran.append("acars"))
     assert deferred is True
-    assert ran == []
     gate.update_from_snapshot(
-        SimSnapshot(connected=True, on_ground=True, ground_velocity_kt=5, alt_agl_ft=0)
+        SimSnapshot(connected=True, on_ground=True, ground_velocity_kt=10, alt_agl_ft=0)
     )
     assert ran == ["acars"]
+
+
+def test_power_gate_defers_until_battery_on() -> None:
+    gate = SterileGate(require_powered=True, flush_stagger_seconds=0)
+    ran: list[str] = []
+    gate.update_from_snapshot(
+        SimSnapshot(
+            connected=True,
+            on_ground=True,
+            ground_velocity_kt=0,
+            alt_agl_ft=0,
+            battery_on=False,
+        )
+    )
+    assert gate.is_unpowered
+    assert gate.is_blocking
+    assert gate.run_or_defer_acars(lambda: ran.append("acars")) is True
+    assert ran == []
+    # Disconnected must not hold forever.
+    gate.update_from_snapshot(None)
+    assert not gate.is_blocking
+    assert ran == ["acars"]
+
+    ran.clear()
+    gate.update_from_snapshot(
+        SimSnapshot(
+            connected=True,
+            on_ground=True,
+            ground_velocity_kt=0,
+            alt_agl_ft=0,
+            battery_on=False,
+        )
+    )
+    assert gate.run_or_defer_simbrief(lambda: ran.append("sb")) is True
+    gate.update_from_snapshot(
+        SimSnapshot(
+            connected=True,
+            on_ground=True,
+            ground_velocity_kt=0,
+            alt_agl_ft=0,
+            battery_on=True,
+        )
+    )
+    assert ran == ["sb"]
+
+
+def test_power_gate_off_ignores_battery() -> None:
+    gate = SterileGate(require_powered=False)
+    gate.update_from_snapshot(
+        SimSnapshot(
+            connected=True,
+            on_ground=True,
+            ground_velocity_kt=0,
+            alt_agl_ft=0,
+            battery_on=False,
+        )
+    )
+    assert not gate.is_blocking
+    ran: list[str] = []
+    assert gate.run_or_defer_acars(lambda: ran.append("ok")) is False
+    assert ran == ["ok"]
 
 
 def test_acars_ingestion_defers_when_sterile(app_session) -> None:
@@ -248,8 +324,17 @@ def test_watcher_lock_final_missed_and_landing(app_session, sample_plan: SimBrie
     jobs = app_session.db.conn.execute("SELECT COUNT(*) AS c FROM print_jobs").fetchone()["c"]
     assert jobs == 2  # FP + prelim
 
-    # Taxi GS triggers final
+    # Taxi GS — need sustained roll (10s) before final
     taxi = SimSnapshot(connected=True, on_ground=True, ground_velocity_kt=8, alt_agl_ft=0)
+    watcher.tick(taxi)
+    assert watcher.state.phase == WatcherPhase.LOCKED
+    assert not watcher.state.final_printed
+
+    mono["t"] += 9
+    watcher.tick(taxi)
+    assert not watcher.state.final_printed
+
+    mono["t"] += 2
     watcher.tick(taxi)
     assert watcher.state.phase == WatcherPhase.FINAL_PRINTED
     assert watcher.state.final_printed

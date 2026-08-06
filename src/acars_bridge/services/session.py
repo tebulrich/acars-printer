@@ -25,7 +25,8 @@ from acars_bridge.simconnect.monitor import SimConnectMonitor, create_simconnect
 
 def _sterile_from_settings(settings: SettingsStore) -> SterileGate:
     return SterileGate(
-        thresholds=SterileThresholds(agl_ft=float(settings.sterile_agl_ft()))
+        thresholds=SterileThresholds(agl_ft=float(settings.sterile_agl_ft())),
+        require_powered=settings.print_when_powered(),
     )
 
 
@@ -76,6 +77,7 @@ class AppSession:
         self.sterile.set_thresholds(
             SterileThresholds(agl_ft=float(self.settings.sterile_agl_ft()))
         )
+        self.sterile.set_require_powered(self.settings.print_when_powered())
 
     def ensure_simbrief_watcher(self) -> SimBriefWatcher:
         if self.simbrief_watcher is None:

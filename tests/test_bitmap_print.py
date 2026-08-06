@@ -3,10 +3,14 @@ from __future__ import annotations
 from acars_bridge.printing.base import PrinterSettings
 from acars_bridge.printing.bitmap_render import (
     columns_for_bitmap,
+    edge_inset_dots,
+    load_glyph_font,
+    measure_char_width,
     mm_hint,
     paper_dot_width,
     px_to_mm,
     render_receipt_bitmap,
+    usable_dot_width,
 )
 from acars_bridge.printing.escpos_printer import EscPosMessagePrinter
 from acars_bridge.models.messages import StoredMessage
@@ -17,11 +21,16 @@ def test_px_to_mm_203dpi():
     assert "1.0 mm" in mm_hint(8)
     assert paper_dot_width("80") == 576
     assert paper_dot_width("58") == 384
+    assert edge_inset_dots() == 16
+    assert usable_dot_width("80") == 576 - 32
 
 
-def test_bitmap_columns_reasonable():
-    cols = columns_for_bitmap("80", 22)
+def test_bitmap_columns_fit_usable_width():
+    glyph_px = 28
+    cols = columns_for_bitmap("80", glyph_px)
     assert 24 <= cols <= 64
+    char_w = measure_char_width(load_glyph_font(glyph_px))
+    assert cols * char_w <= usable_dot_width("80")
 
 
 def test_render_receipt_bitmap_size():

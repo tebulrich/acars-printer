@@ -473,3 +473,15 @@ class SettingsStore:
     @classmethod
     def sterile_agl_choices(cls) -> tuple[int, ...]:
         return cls._STERILE_AGL_CHOICES
+
+    def print_when_powered(self) -> bool:
+        """When on, queue prints until SimConnect reports a battery master ON."""
+        return (self.get("print_when_powered", "0") or "0") in {
+            "1",
+            "true",
+            "yes",
+            "on",
+        }
+
+    def set_print_when_powered(self, enabled: bool) -> None:
+        self.set("print_when_powered", "1" if enabled else "0")

@@ -45,6 +45,7 @@ class WatcherState:
     airborne_since: float | None = None
     on_ground_since: float | None = None
     post_landing_since: float | None = None
+    rolling_since: float | None = None
     status: str = "idle"
     plan: SimBriefFlightPlan | None = None
     final_values: LoadsheetValues | None = None
@@ -58,6 +59,8 @@ class WatcherConfig:
     final_before_offblock_seconds: float = 5 * 60.0
     taxi_gs_min_kt: float = 3.0
     taxi_gs_max_kt: float = 40.0
+    # Sustained ground roll before auto-printing the final loadsheet.
+    taxi_roll_seconds: float = 10.0
     airborne_debounce_seconds: float = 15.0
     landing_debounce_seconds: float = 60.0
     post_landing_grace_seconds: float = 600.0
@@ -203,6 +206,10 @@ class SimBriefWatcher:
         return f"printed {plan.callsign} {plan.origin_icao}-{plan.dest_icao}"
 
     def unlock(self, *, reason: str = "manual") -> None:
+        # Manual unlock means "start over" — allow the same OFP to lock again.
+        # Automatic unlocks keep last_ofp_id so we don't immediately re-print.
+        if reason == "manual":
+            self.settings.set_simbrief_last_ofp_id(None)
         self.state = WatcherState(
             phase=WatcherPhase.POLLING,
             status=f"unlocked ({reason})",
@@ -296,6 +303,7 @@ class SimBriefWatcher:
         self.state.airborne_since = None
         self.state.on_ground_since = None
         self.state.post_landing_since = None
+        self.state.rolling_since = None
         self.state.final_values = build_final_values(
             plan, randomize=self.settings.simbrief_randomize_final()
         )
@@ -324,12 +332,22 @@ class SimBriefWatcher:
             if now_utc >= (plan.sched_out_utc - lead):
                 return True
 
-        # Taxi motion window
-        if snapshot is not None and snapshot.connected and snapshot.on_ground:
-            gs = snapshot.ground_velocity_kt
-            if self.config.taxi_gs_min_kt < gs < self.config.taxi_gs_max_kt:
-                self.state.motion_seen = True
+        # Latest trigger: sustained taxi roll on the ground (not airborne).
+        if snapshot is None or not snapshot.connected or not snapshot.on_ground:
+            self.state.rolling_since = None
+            return False
+
+        gs = snapshot.ground_velocity_kt
+        rolling = self.config.taxi_gs_min_kt < gs < self.config.taxi_gs_max_kt
+        now_mono = self._now_fn()
+        if rolling:
+            self.state.motion_seen = True
+            if self.state.rolling_since is None:
+                self.state.rolling_since = now_mono
+            elif (now_mono - self.state.rolling_since) >= self.config.taxi_roll_seconds:
                 return True
+        else:
+            self.state.rolling_since = None
         return False
 
     def _print_final(self, plan: SimBriefFlightPlan, *, reason: str) -> None:
@@ -476,6 +494,7 @@ class SimBriefWatcher:
             "airborne_since": self.state.airborne_since,
             "on_ground_since": self.state.on_ground_since,
             "post_landing_since": self.state.post_landing_since,
+            "rolling_since": self.state.rolling_since,
             "status": self.state.status,
             "backoff_seconds": self.state.backoff_seconds,
             "next_poll_at": self.state.next_poll_at,
@@ -507,6 +526,7 @@ class SimBriefWatcher:
         self.state.airborne_since = blob.get("airborne_since")
         self.state.on_ground_since = blob.get("on_ground_since")
         self.state.post_landing_since = blob.get("post_landing_since")
+        self.state.rolling_since = blob.get("rolling_since")
         self.state.status = str(blob.get("status") or phase.value)
         self.state.backoff_seconds = float(blob.get("backoff_seconds") or 0.0)
         self.state.next_poll_at = float(blob.get("next_poll_at") or 0.0)

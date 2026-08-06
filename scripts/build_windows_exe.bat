@@ -13,7 +13,7 @@ if errorlevel 1 exit /b 1
 uv run python packaging/generate_icon.py
 if errorlevel 1 exit /b 1
 
-echo Building exe (usually 3-8 minutes^)...
+echo Building main exe (usually 3-8 minutes^)...
 uv run pyinstaller --noconfirm --clean packaging/acars-bridge.spec
 if errorlevel 1 exit /b 1
 
@@ -25,5 +25,5 @@ if not exist "%EXE%" (
 
 echo.
 echo Built: %EXE%
-echo Double-click it - Windows will ask for Administrator.
+echo Double-click the exe - Windows will ask for Administrator.
 exit /b 0

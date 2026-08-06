@@ -12,7 +12,7 @@ _FLIGHT_PLAN_TEMPLATE = """
 **ACARS START**
 ===
 **{Callsign}**
-{AircraftName} ({AircraftReg})
+{AircraftReg}
 ---
 {OriginIcao}/{OriginIata}  ->  {DestIcao}/{DestIata}
 ALTN: {AlternateIcao}
@@ -135,11 +135,12 @@ def render_loadsheet_ticket(
     width: int = 32,
 ) -> str:
     lines: list[str] = [
+        "ACARS START",
         "LOAD SHEET",
         label.upper(),
         _divider(width, "="),
         f"{plan.callsign}  {plan.origin_icao}-{plan.dest_icao}",
-        f"{plan.aircraft_reg} {plan.aircraft_name}",
+        plan.aircraft_reg,
         _divider(width, "-"),
     ]
     lines.extend(_key_value("PAX:", _fmt_pax(values), width))
@@ -170,5 +171,6 @@ def render_loadsheet_ticket(
     lines.append(_divider(width, "-"))
     lines.extend(_key_value("TAKEOFF FUEL:", f"{plan.takeoff_fuel} {plan.units}", width))
     lines.append(_divider(width, "="))
+    lines.append("ACARS END")
     lines.append("")
     return "\n".join(lines)
