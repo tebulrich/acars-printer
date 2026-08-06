@@ -80,6 +80,8 @@ Open the **Settings** tab:
 | Paper width / cut | Match your roll (usually 80 mm). Leave cut/tear assist on for typical POS printers. |
 | Auto-connect | On by default - Connects when the app starts (still needs Administrator). |
 | Check for updates | On by default - looks for a newer GitHub release and offers one-click install of the Windows exe. |
+| Sterile until | APP section. Mutes thermal prints (ACARS + SimBrief) while airborne below this AGL, or on the ground at ≥40 kt. Queued strips flush when sterile ends. Needs SimConnect (MSFS). Default 1500 ft. |
+| SimBrief | Enable + username/pilot ID to auto-print flight plan and loadsheets. See [SimBrief](#simbrief-ofp--loadsheets). |
 
 Click **Save settings**. Put the logon / API key and flight callsign in the
 **aircraft** ACARS pages. The plane's client must send the requests; this
@@ -92,6 +94,9 @@ app only watches and prints.
 3. In the sim, use ACARS as usual (METAR, ATIS, CPDLC, company telex, etc.).
 4. Printed copies should appear on the printer; the Messages list shows what was
    stored.
+
+Header chips show callsign, LINK, **STERILE**, OFP status, and SIM/UTC Zulu.
+**Print OFP** / **Unlock OFP** fetch or clear the locked SimBrief plan.
 
 **Refresh** reloads the message list and bridge status. **Debug** is only for
 troubleshooting (do not paste secrets into public chats - the log redacts
@@ -113,6 +118,29 @@ Click **Disconnect**, then close the app.
   printed.
 - Aircraft clients that never talk to Hoppie / SayIntentions from this PC cannot
   be printed this way (see [Compatibility](#compatibility), e.g. PMDG, Fenix).
+- **STERILE on?** Below your sterile AGL or taxiing ≥40 kt, prints queue and
+  release when sterile ends (needs SimConnect connected).
+
+## SimBrief OFP + loadsheets
+
+Optional companion to ACARS printing (inspired by SimPrinter). When enabled:
+
+1. Polls SimBrief about once a minute for a **new eligible OFP** (new `ofp_id`,
+   scheduled out in the future or within ~60 minutes past).
+2. On lock: prints **flight plan** + **preliminary** loadsheet (full route).
+3. **Final** loadsheet at the earlier of T−5 before SOBT (sim Zulu if
+   SimConnect is up, else wall UTC) or taxi GS 3–40 kt — never while sterile.
+4. If takeoff happens without a final, prints the missed final **once after
+   landing** (not in climb).
+5. Unlocks after landing + grace (default 10 minutes), or earlier on a new OFP /
+   Unlock / max lock (8 h).
+
+**Print OFP** forces FP + prelim + final for the latest plan (deferred if
+sterile). Mid-flight app restarts restore the locked OFP from settings so final /
+missed-final logic can continue.
+
+Requires a SimBrief username or numeric pilot ID. SimConnect DLLs ship under
+`third_party/SimConnect` for MSFS sterile timing and the SIM clock chip.
 
 ## Requirements
 
@@ -167,5 +195,9 @@ uv run pytest
   [Integrate with SayIntentions.AI ACARS/CPDLC](https://kb.sayintentions.ai/article/integrate-with-sayintentions-ai-acars-cpdlc)
 - WinDivert 2.2.2 binaries used by the tap live under `third_party/WinDivert`
   (LGPL; see that directory's LICENSE)
+- The local MITM proxy **must bind `0.0.0.0`** so WinDivert reflection can deliver
+  diverted ACARS TLS to the LAN address (loopback-only bind breaks Connect). Run
+  elevated only while you need the tap; firewall rules should keep the proxy
+  ports off the public internet.
 - App data (SQLite, optional legacy encrypted logon, tap CA certs, debug.log) is
   under `%LOCALAPPDATA%\acars-bridge\acars-bridge`

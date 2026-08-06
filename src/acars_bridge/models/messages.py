@@ -171,6 +171,20 @@ class MessageRepository:
                 pass
             self._db.conn.commit()
 
+    def latest_print_status(self, message_id: int) -> str | None:
+        """Return last print_jobs.status for a message, if any."""
+        with self._db.lock:
+            row = self._db.conn.execute(
+                """
+                SELECT status FROM print_jobs
+                WHERE message_id = ?
+                ORDER BY id DESC
+                LIMIT 1
+                """,
+                (message_id,),
+            ).fetchone()
+        return str(row["status"]) if row else None
+
     def create_print_job(
         self,
         message_id: int,
@@ -202,3 +216,39 @@ class MessageRepository:
             )
             self._db.conn.commit()
             return int(cur.lastrowid)
+
+    def insert_ticket(
+        self,
+        *,
+        callsign: str,
+        ticket_type: str,
+        body: str,
+        fingerprint: str,
+        sender: str = "SIMBRIEF",
+    ) -> StoredMessage:
+        """Store a non-Hoppie dispatch ticket for history / print_jobs."""
+        with self._db.lock:
+            cur = self._db.conn.execute(
+                """
+                INSERT INTO messages (
+                    fingerprint, direction, callsign, sender, recipient, to_station,
+                    message_type, raw_payload, normalized_body, min, mrn, ra,
+                    send_status, received_at
+                ) VALUES (?, 'in', ?, ?, ?, NULL, ?, ?, ?, NULL, NULL, NULL, NULL, ?)
+                """,
+                (
+                    fingerprint,
+                    callsign,
+                    sender,
+                    callsign,
+                    ticket_type,
+                    body,
+                    body,
+                    _utc_now(),
+                ),
+            )
+            self._db.conn.commit()
+            row_id = int(cur.lastrowid)
+        stored = self.get(row_id)
+        assert stored is not None
+        return stored

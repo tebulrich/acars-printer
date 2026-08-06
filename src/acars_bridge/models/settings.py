@@ -373,3 +373,103 @@ class SettingsStore:
             current = 1
         self.set("next_downlink_min", str(current + 1))
         return current
+
+    # --- SimBrief ---
+
+    def simbrief_user(self) -> str | None:
+        value = (self.get("simbrief_user") or "").strip()
+        return value or None
+
+    def set_simbrief_user(self, user: str) -> None:
+        cleaned = user.strip()
+        self.set("simbrief_user", cleaned or None)
+
+    def simbrief_enabled(self) -> bool:
+        return (self.get("simbrief_enabled", "0") or "0") in {"1", "true", "yes", "on"}
+
+    def set_simbrief_enabled(self, enabled: bool) -> None:
+        self.set("simbrief_enabled", "1" if enabled else "0")
+
+    def simbrief_post_landing_grace_seconds(self) -> int:
+        raw = self.get("simbrief_post_landing_grace_seconds", "600")
+        try:
+            return max(60, min(7200, int(raw or 600)))
+        except ValueError:
+            return 600
+
+    def set_simbrief_post_landing_grace_seconds(self, seconds: int | str) -> None:
+        try:
+            value = int(seconds)
+        except (TypeError, ValueError):
+            value = 600
+        self.set("simbrief_post_landing_grace_seconds", str(max(60, min(7200, value))))
+
+    def simbrief_randomize_final(self) -> bool:
+        return (self.get("simbrief_randomize_final", "0") or "0") in {
+            "1",
+            "true",
+            "yes",
+            "on",
+        }
+
+    def set_simbrief_randomize_final(self, enabled: bool) -> None:
+        self.set("simbrief_randomize_final", "1" if enabled else "0")
+
+    def simbrief_last_ofp_id(self) -> str | None:
+        value = (self.get("simbrief_last_ofp_id") or "").strip()
+        return value or None
+
+    def set_simbrief_last_ofp_id(self, ofp_id: str | None) -> None:
+        if not ofp_id:
+            self.set("simbrief_last_ofp_id", None)
+        else:
+            self.set("simbrief_last_ofp_id", ofp_id)
+
+    def simbrief_lock_state(self) -> str | None:
+        value = self.get("simbrief_lock_state")
+        return value if value else None
+
+    def set_simbrief_lock_state(self, blob: str | None) -> None:
+        self.set("simbrief_lock_state", blob)
+
+    # --- Sterile cockpit (mutes all thermal printing) ---
+
+    _STERILE_AGL_CHOICES = (
+        1000,
+        1500,
+        2000,
+        2500,
+        3000,
+        4000,
+        5000,
+        6000,
+        7000,
+        8000,
+        9000,
+        10000,
+    )
+
+    def sterile_agl_ft(self) -> int:
+        """Mute printing while airborne below this AGL (ft)."""
+        raw = self.get("sterile_agl_ft", "1500")
+        try:
+            value = int(raw or 1500)
+        except ValueError:
+            return 1500
+        if value in self._STERILE_AGL_CHOICES:
+            return value
+        # Snap to nearest allowed choice.
+        return min(self._STERILE_AGL_CHOICES, key=lambda choice: abs(choice - value))
+
+    def set_sterile_agl_ft(self, feet: int | str) -> None:
+        try:
+            value = int(feet)
+        except (TypeError, ValueError):
+            value = 1500
+        if value not in self._STERILE_AGL_CHOICES:
+            value = min(self._STERILE_AGL_CHOICES, key=lambda choice: abs(choice - value))
+        self.set("sterile_agl_ft", str(value))
+
+    @classmethod
+    def sterile_agl_choices(cls) -> tuple[int, ...]:
+        return cls._STERILE_AGL_CHOICES

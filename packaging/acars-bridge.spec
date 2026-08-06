@@ -26,6 +26,19 @@ if windivert.exists():
         if path.exists():
             wd_datas.append((str(path), "WinDivert"))
 
+simconnect = root / "third_party" / "SimConnect"
+sc_datas = []
+if simconnect.exists():
+    for name in (
+        "SimConnect.dll",
+        "MSVCP140.dll",
+        "VCRUNTIME140.dll",
+        "VCRUNTIME140_1.dll",
+    ):
+        path = simconnect / name
+        if path.exists():
+            sc_datas.append((str(path), "SimConnect"))
+
 _qt_excludes = [
     "PySide6.QtWebEngine",
     "PySide6.QtWebEngineCore",
@@ -134,7 +147,7 @@ a = Analysis(
     [str(root / "src" / "acars_bridge" / "__main__.py")],
     pathex=[str(root / "src")],
     binaries=[],
-    datas=escpos_datas + divert_datas + wd_datas + logo_datas,
+    datas=escpos_datas + divert_datas + wd_datas + sc_datas + logo_datas,
     hiddenimports=[
         "pydivert",
         "acars_bridge",

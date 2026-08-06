@@ -5,6 +5,7 @@ import subprocess
 import sys
 import time
 from collections.abc import Callable
+from concurrent.futures import ThreadPoolExecutor
 from datetime import UTC, datetime
 from typing import Any
 
@@ -84,12 +85,13 @@ class AcarsBridgeApp(QMainWindow):
         # Detail pane: hidden while auto-print is on until the user opens a message.
         self._detail_opened = False
 
-        # Messages are session-scoped in the UI — don't keep yesterday's list.
-        self.session.messages.clear_all()
-
+        # Keep recent traffic across restarts so strips can be reprinted.
         self._bridge = _TapBridge(self)
         self._bridge.updated.connect(self._apply_tap_update)
         self._bridge.new_messages.connect(self._on_new_messages)
+        self._simbrief_pool = ThreadPoolExecutor(max_workers=1, thread_name_prefix="simbrief")
+        self._simbrief_poll_busy = False
+        self._last_sterile = False
 
         self.debug = DebugLog(
             session.paths.root / "debug.log",
@@ -120,6 +122,13 @@ class AcarsBridgeApp(QMainWindow):
         self._clock_timer.timeout.connect(self._tick_clock)
         self._clock_timer.start(1000)
         self._tick_clock()
+
+        self.session.simconnect.start()
+        self.session.ensure_simbrief_watcher()
+        self._simbrief_timer = QTimer(self)
+        self._simbrief_timer.timeout.connect(self._tick_simbrief)
+        self._simbrief_timer.start(1000)
+        self._tick_simbrief()
 
         # After the window is up — same path as the Connect button.
         if self.session.settings.auto_connect():
@@ -175,11 +184,29 @@ class AcarsBridgeApp(QMainWindow):
 
         self.callsign_chip = self._chip("FLT —")
         self.link_chip = self._chip("LINK off")
+        self.sterile_chip = self._chip("STERILE off")
+        self.simbrief_chip = self._chip("OFP —")
         self.clock_chip = self._chip("UTC —")
-        for chip in (self.callsign_chip, self.link_chip, self.clock_chip):
+        for chip in (
+            self.callsign_chip,
+            self.link_chip,
+            self.sterile_chip,
+            self.simbrief_chip,
+            self.clock_chip,
+        ):
             action_row.addWidget(chip)
         action_row.addStretch(1)
 
+        self.btn_ofp_print = QPushButton("Print OFP")
+        self.btn_ofp_print.setToolTip("Fetch latest SimBrief OFP and print FP + prelim + final")
+        self.btn_ofp_print.clicked.connect(
+            lambda: self._run_action("simbrief_print_now", self._simbrief_print_now)
+        )
+        self.btn_ofp_unlock = QPushButton("Unlock OFP")
+        self.btn_ofp_unlock.setToolTip("Clear OFP lock and resume SimBrief polling")
+        self.btn_ofp_unlock.clicked.connect(
+            lambda: self._run_action("simbrief_unlock", self._simbrief_unlock)
+        )
         self.btn_connect = QPushButton("Connect")
         self.btn_connect.setObjectName("Primary")
         self.btn_connect.clicked.connect(
@@ -195,6 +222,8 @@ class AcarsBridgeApp(QMainWindow):
         self.btn_quit.setToolTip("Exit completely (stops the ACARS tap)")
         self.btn_quit.clicked.connect(self._quit_app)
         for btn in (
+            self.btn_ofp_print,
+            self.btn_ofp_unlock,
             self.btn_connect,
             self.btn_disconnect,
             self.btn_debug,
@@ -573,6 +602,36 @@ class AcarsBridgeApp(QMainWindow):
             "on" if self.session.settings.check_updates() else "off"
         )
 
+        sterile_agl = QComboBox()
+        for feet in self.session.settings.sterile_agl_choices():
+            sterile_agl.addItem(f"{feet} ft AGL", feet)
+        sterile_idx = sterile_agl.findData(self.session.settings.sterile_agl_ft())
+        sterile_agl.setCurrentIndex(sterile_idx if sterile_idx >= 0 else 1)
+        sterile_agl.setToolTip(
+            "No thermal prints (ACARS or SimBrief) while airborne below this altitude, "
+            "or on the ground at 40+ kt. Queued strips print when sterile ends."
+        )
+
+        simbrief_user = QLineEdit(self.session.settings.simbrief_user() or "")
+        simbrief_user.setPlaceholderText("username or pilot ID")
+        simbrief_user.setToolTip("SimBrief username or numeric pilot ID")
+
+        simbrief_enabled = QComboBox()
+        simbrief_enabled.addItems(["off", "on"])
+        simbrief_enabled.setCurrentText(
+            "on" if self.session.settings.simbrief_enabled() else "off"
+        )
+
+        simbrief_grace = QSpinBox()
+        simbrief_grace.setRange(1, 120)
+        simbrief_grace.setSuffix(" min")
+        simbrief_grace.setValue(
+            max(1, self.session.settings.simbrief_post_landing_grace_seconds() // 60)
+        )
+        simbrief_grace.setToolTip(
+            "After landing, wait this long before unlocking to poll for the next OFP"
+        )
+
         self._settings_widgets = {
             "network": network,
             "callsign": callsign,
@@ -580,6 +639,10 @@ class AcarsBridgeApp(QMainWindow):
             "auto_print": auto_print,
             "auto_connect": auto_connect,
             "check_updates": check_updates,
+            "sterile_agl": sterile_agl,
+            "simbrief_user": simbrief_user,
+            "simbrief_enabled": simbrief_enabled,
+            "simbrief_grace": simbrief_grace,
         }
 
         columns = QHBoxLayout()
@@ -594,15 +657,40 @@ class AcarsBridgeApp(QMainWindow):
         right.addRow("Auto-print", auto_print)
         right.addRow("Auto-connect", auto_connect)
         right.addRow("Check for updates", check_updates)
+        right.addRow("Sterile until", sterile_agl)
+
+        simbrief = self._form_column("SIMBRIEF")
+        simbrief.addRow("Enabled", simbrief_enabled)
+        simbrief.addRow("Username / ID", simbrief_user)
+        simbrief.addRow("Post-landing grace", simbrief_grace)
 
         self._add_form_column(columns, left)
         self._add_form_column(columns, right)
+        self._add_form_column(columns, simbrief)
         page_layout.addLayout(columns)
+
+        btn_row = QHBoxLayout()
+        btn_row.setSpacing(8)
+        print_now = QPushButton("Print OFP now")
+        print_now.setToolTip("Fetch latest SimBrief OFP and print FP + prelim + final")
+        print_now.clicked.connect(
+            lambda: self._run_action("simbrief_print_now", self._simbrief_print_now)
+        )
+        unlock_btn = QPushButton("Unlock OFP")
+        unlock_btn.setToolTip("Clear the current OFP lock and resume polling")
+        unlock_btn.clicked.connect(
+            lambda: self._run_action("simbrief_unlock", self._simbrief_unlock)
+        )
+        btn_row.addWidget(print_now)
+        btn_row.addWidget(unlock_btn)
+        btn_row.addStretch(1)
+        page_layout.addLayout(btn_row)
 
         help_lbl = QLabel(
             "Aircraft logon / API key stays in the plane. Match Network to that setup. "
             "Callsign filter limits which flight prints; registration appears on the strip header. "
-            "Printer layout is on the Format tab."
+            "SimBrief auto-prints flight plan + loadsheets; printing is muted during takeoff/landing "
+            "up to your Sterile until altitude (queued strips print after). Printer layout is on the Format tab."
         )
         help_lbl.setObjectName("Muted")
         help_lbl.setWordWrap(True)
@@ -783,10 +871,24 @@ class AcarsBridgeApp(QMainWindow):
         self._sync_detail_visibility()
 
     def _message_item(self, msg: StoredMessage) -> QListWidgetItem:
-        preview = msg.normalized_body.replace("\n", " ")[:48]
+        preview = msg.normalized_body.replace("\n", " ")[:40]
         direction = "OUT" if msg.direction == "out" else "IN"
         station = msg.sender or msg.to_station or "?"
-        label = f"{direction}  {station}  {msg.message_type.upper()}  {preview}"
+        when = ""
+        if msg.received_at:
+            try:
+                stamp = datetime.fromisoformat(msg.received_at)
+                when = stamp.strftime("%H:%MZ")
+            except ValueError:
+                when = msg.received_at[11:16] + "Z" if len(msg.received_at) >= 16 else ""
+        print_status = self.session.messages.latest_print_status(msg.id)
+        if print_status == "printed":
+            mark = "PRN"
+        elif print_status == "failed":
+            mark = "FAIL"
+        else:
+            mark = "—"
+        label = f"{when}  {direction}  {station}  {msg.message_type.upper()}  {mark}  {preview}"
         item = QListWidgetItem(label)
         item.setData(Qt.ItemDataRole.UserRole, msg.id)
         return item
@@ -905,7 +1007,11 @@ class AcarsBridgeApp(QMainWindow):
         source: str = "ui",
     ) -> None:
         self.debug.action(name, source=source, **self._debug_context())
-        fn()
+        try:
+            fn()
+        except Exception as exc:  # noqa: BLE001
+            self.debug.info("action_error", action=name, error=str(exc))
+            self._flash(str(exc), error=True)
 
     def _sync_connection_buttons(self, *, running: bool | None = None) -> None:
         is_running = self.tap.status.running if running is None else running
@@ -1018,7 +1124,11 @@ class AcarsBridgeApp(QMainWindow):
             self._set_link_state("ok", status.last_check)
         self._update_tray_tooltip()
 
-        new_count = int(stats.get("printed", 0)) + int(stats.get("stored", 0))
+        new_count = (
+            int(stats.get("printed", 0))
+            + int(stats.get("stored", 0))
+            + int(stats.get("deferred", 0))
+        )
         user_check = self._user_check_pending
         if status.last_check is not None or status.last_error:
             self._user_check_pending = False
@@ -1026,10 +1136,16 @@ class AcarsBridgeApp(QMainWindow):
             self._flash(status.last_error, error=True)
         elif new_count > 0:
             printed = int(stats.get("printed", 0))
+            deferred = int(stats.get("deferred", 0))
+            failed = int(stats.get("failed_prints", 0))
+            bits: list[str] = [f"{new_count} new"]
             if printed:
-                self._flash(f"{new_count} new · {printed} printed")
-            else:
-                self._flash(f"{new_count} new message(s)")
+                bits.append(f"{printed} printed")
+            if deferred:
+                bits.append(f"{deferred} queued (sterile)")
+            if failed:
+                bits.append(f"{failed} failed")
+            self._flash(" · ".join(bits), error=failed > 0 and printed == 0)
         elif user_check:
             filt = self.session.settings.callsign()
             extra = f" · filter {filt}" if filt else ""
@@ -1053,6 +1169,10 @@ class AcarsBridgeApp(QMainWindow):
 
     @Slot(int)
     def _on_new_messages(self, count: int) -> None:
+        if self.session.sterile.is_sterile:
+            return
+        if self.isActiveWindow() and not self.isMinimized():
+            return
         notify("ACARS Print Bridge", f"{count} new message(s)")
 
     def _reprint(self) -> None:
@@ -1063,9 +1183,14 @@ class AcarsBridgeApp(QMainWindow):
         if not msg:
             return
         settings = self._printer_settings()
-        result = self.session.print_manager.print_message(msg, settings, is_reprint=True)
-        ok = result == "printed"
-        self._flash("Printed." if ok else "Print failed.", error=not ok)
+
+        def job() -> None:
+            self.session.print_manager.print_message(msg, settings, is_reprint=True)
+
+        if self.session.sterile.run_or_defer_acars(job):
+            self._flash("Reprint queued until sterile ends.")
+            return
+        self._flash("Printed.")
 
     def _test_print(self) -> None:
         settings = self._printer_settings()
@@ -1163,9 +1288,23 @@ class AcarsBridgeApp(QMainWindow):
         self.session.settings.set_check_updates(
             w["check_updates"].currentText() == "on"
         )
+        self.session.settings.set_simbrief_user(w["simbrief_user"].text().strip())
+        self.session.settings.set_simbrief_enabled(
+            w["simbrief_enabled"].currentText() == "on"
+        )
+        grace_min = int(w["simbrief_grace"].value())
+        self.session.settings.set_simbrief_post_landing_grace_seconds(grace_min * 60)
+        sterile_feet = w["sterile_agl"].currentData()
+        if sterile_feet is not None:
+            self.session.settings.set_sterile_agl_ft(int(sterile_feet))
+        self.session.apply_sterile_settings()
+        watcher = self.session.ensure_simbrief_watcher()
+        watcher.config.post_landing_grace_seconds = float(grace_min * 60)
+        watcher.config.randomize_final = self.session.settings.simbrief_randomize_final()
         self.session.rebuild_printer()
         notes: list[str] = []
         self._refresh_header()
+        self._tick_simbrief()
         if prev_network != new_network and self.tap.status.running:
             self.tap.stop()
             self._sync_connection_buttons(running=False)
@@ -1177,11 +1316,129 @@ class AcarsBridgeApp(QMainWindow):
         self._reload_messages()
         self._sync_detail_visibility()
 
+    def _tick_simbrief(self) -> None:
+        if self._closing:
+            return
+        watcher = self.session.ensure_simbrief_watcher()
+        try:
+            snap = self.session.simconnect.snapshot()
+            was_sterile = self.session.sterile.is_sterile
+            self.session.sterile.update_from_snapshot(snap)
+            now_sterile = self.session.sterile.is_sterile
+            if was_sterile and not now_sterile:
+                self._flash("Sterile ended — printing queued strips")
+            elif not was_sterile and now_sterile:
+                self._flash(
+                    f"Sterile until {int(self.session.sterile.thresholds.agl_ft)} ft AGL"
+                )
+            self._last_sterile = now_sterile
+            self._update_sterile_chip(snap)
+            watcher.tick_local(snap)
+            if watcher.needs_network_poll() and not self._simbrief_poll_busy:
+                self._simbrief_poll_busy = True
+                self._simbrief_pool.submit(self._simbrief_poll_worker)
+        except Exception as exc:  # noqa: BLE001
+            self.debug.info("simbrief_tick_error", error=str(exc))
+        text = watcher.status_text() or "—"
+        if len(text) > 42:
+            text = text[:39] + "…"
+        self.simbrief_chip.setText(f"OFP {text}")
+        self.simbrief_chip.setToolTip(watcher.status_text())
+
+    def _simbrief_poll_worker(self) -> None:
+        try:
+            watcher = self.session.ensure_simbrief_watcher()
+            watcher.poll_network_if_due()
+        except Exception as exc:  # noqa: BLE001
+            self.debug.info("simbrief_poll_error", error=str(exc))
+        finally:
+            self._simbrief_poll_busy = False
+            QTimer.singleShot(0, self._refresh_ofp_chip)
+
+    def _refresh_ofp_chip(self) -> None:
+        if self._closing:
+            return
+        watcher = self.session.ensure_simbrief_watcher()
+        text = watcher.status_text() or "—"
+        if len(text) > 42:
+            text = text[:39] + "…"
+        self.simbrief_chip.setText(f"OFP {text}")
+        self.simbrief_chip.setToolTip(watcher.status_text())
+        self._reload_messages()
+
+    def _update_sterile_chip(self, snap: object | None) -> None:
+        from acars_bridge.simconnect.monitor import SimSnapshot
+
+        sterile = self.session.sterile.is_sterile
+        connected = isinstance(snap, SimSnapshot) and snap.connected
+        acars_n, sb_n = self.session.sterile.queue_sizes()
+        queued = acars_n + sb_n
+        if not connected:
+            self.sterile_chip.setText("STERILE —")
+            self.sterile_chip.setToolTip(
+                "SimConnect not connected — sterile mute inactive (ACARS still prints)"
+            )
+            return
+        if sterile:
+            label = "STERILE on"
+            if queued:
+                label = f"STERILE q{queued}"
+            self.sterile_chip.setText(label)
+            self.sterile_chip.setToolTip(
+                f"Printing muted below {int(self.session.sterile.thresholds.agl_ft)} ft AGL "
+                f"or ≥40 kt on ground. Queued: ACARS {acars_n}, SimBrief {sb_n}."
+            )
+        else:
+            self.sterile_chip.setText("STERILE off")
+            self.sterile_chip.setToolTip("Printer live — not in sterile window")
+
+    def _simbrief_print_now(self) -> None:
+        if self._simbrief_poll_busy:
+            self._flash("SimBrief poll in progress — try again in a moment.")
+            return
+        self._simbrief_poll_busy = True
+        self._flash("Fetching SimBrief OFP…")
+        self._simbrief_pool.submit(self._simbrief_print_now_worker)
+
+    def _simbrief_print_now_worker(self) -> None:
+        from acars_bridge.simbrief.client import SimBriefError
+
+        msg = ""
+        err = ""
+        try:
+            watcher = self.session.ensure_simbrief_watcher()
+            msg = watcher.print_now()
+        except SimBriefError as exc:
+            err = str(exc)
+        except Exception as exc:  # noqa: BLE001
+            err = str(exc)
+        finally:
+            self._simbrief_poll_busy = False
+
+        def done() -> None:
+            self._refresh_ofp_chip()
+            if err:
+                self._flash(err, error=True)
+            else:
+                self._flash(msg or "OFP printed.")
+
+        QTimer.singleShot(0, done)
+
+    def _simbrief_unlock(self) -> None:
+        watcher = self.session.ensure_simbrief_watcher()
+        watcher.unlock(reason="manual")
+        self._refresh_ofp_chip()
+        self._flash("SimBrief OFP unlocked — polling resumed")
+
     def _tick_clock(self) -> None:
         if self._closing:
             return
-        now = datetime.now(UTC).strftime("%H:%MZ")
-        self.clock_chip.setText(f"UTC {now}")
+        snap = self.session.simconnect.snapshot()
+        from acars_bridge.simbrief.watcher import default_clock
+
+        now = default_clock(snap)
+        label = "SIM" if (snap is not None and snap.connected) else "UTC"
+        self.clock_chip.setText(f"{label} {now.strftime('%H:%MZ')}")
 
     def _show_debug_log(self) -> None:
         dlg = QDialog(self)
@@ -1299,6 +1556,14 @@ class AcarsBridgeApp(QMainWindow):
             pass
         try:
             self._clock_timer.stop()
+        except Exception:  # noqa: BLE001
+            pass
+        try:
+            self._simbrief_timer.stop()
+        except Exception:  # noqa: BLE001
+            pass
+        try:
+            self._simbrief_pool.shutdown(wait=False, cancel_futures=True)
         except Exception:  # noqa: BLE001
             pass
         if self._tray is not None:

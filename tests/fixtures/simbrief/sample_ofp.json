@@ -1,0 +1,58 @@
+{
+  "fetch": {"status": "Success", "time": "123"},
+  "params": {
+    "request_id": "OFP-1001",
+    "units": "kg",
+    "time_generated": "1700000000"
+  },
+  "general": {
+    "icao_airline": "DLH",
+    "flight_number": "4MC",
+    "route": "CINDY8S CINDY Z10 DONEN UL603 RASCA",
+    "route_distance": "312",
+    "initial_altitude": "35000"
+  },
+  "aircraft": {
+    "icaocode": "A320",
+    "name": "AIRBUS A-320",
+    "reg": "D-AILA"
+  },
+  "origin": {
+    "icao_code": "EDDF",
+    "iata_code": "FRA",
+    "name": "FRANKFURT"
+  },
+  "destination": {
+    "icao_code": "EDDM",
+    "iata_code": "MUC",
+    "name": "MUNICH"
+  },
+  "alternate": [
+    {
+      "icao_code": "EDDN",
+      "name": "NUREMBERG"
+    }
+  ],
+  "atc": {
+    "callsign": "DLH4MC"
+  },
+  "times": {
+    "est_time_enroute": "3900",
+    "sched_out": "1893456000",
+    "sched_in": "1893460000"
+  },
+  "fuel": {
+    "plan_ramp": "6200",
+    "taxi": "200",
+    "plan_takeoff": "6000"
+  },
+  "weights": {
+    "est_zfw": "58000",
+    "est_tow": "64000",
+    "max_zfw": "62500",
+    "max_tow": "73500",
+    "pax_count_actual": "150",
+    "pax_weight": "84",
+    "cargo": "1200"
+  }
+}

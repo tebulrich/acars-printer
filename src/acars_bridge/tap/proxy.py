@@ -48,6 +48,9 @@ class HoppieForwardProxy:
         self._sockets: list[socket.socket] = []
         self.exchanges = 0
         self.last_error: str | None = None
+        self._worker_sema = threading.BoundedSemaphore(32)
+        self._active_workers = 0
+        self._worker_lock = threading.Lock()
 
     def _debug(self, message: str) -> None:
         if self._on_debug:
@@ -113,13 +116,30 @@ class HoppieForwardProxy:
                 if self._stop.is_set():
                     break
                 continue
+            if not self._worker_sema.acquire(blocking=False):
+                self._debug(f"worker limit — drop peer={addr[0]}:{addr[1]}")
+                try:
+                    client.close()
+                except OSError:
+                    pass
+                continue
             self._debug(f"accept tls={tls} peer={addr[0]}:{addr[1]}")
+            with self._worker_lock:
+                self._active_workers += 1
             worker = threading.Thread(
-                target=self._handle_client,
+                target=self._worker_entry,
                 args=(client, tls),
                 daemon=True,
             )
             worker.start()
+
+    def _worker_entry(self, client: socket.socket, tls: bool) -> None:
+        try:
+            self._handle_client(client, tls)
+        finally:
+            self._worker_sema.release()
+            with self._worker_lock:
+                self._active_workers = max(0, self._active_workers - 1)
 
     def _handle_client(self, client: socket.socket, tls: bool) -> None:
         upstream: socket.socket | None = None

@@ -87,3 +87,45 @@ def test_fetch_latest_missing_asset():
     with _client_with({"tag_name": "v1.0.0", "assets": []}) as client:
         with pytest.raises(UpdateError, match="no Windows"):
             fetch_latest_release(client=client)
+
+
+def test_fetch_latest_parses_asset_digest():
+    digest = "a" * 64
+    payload = {
+        "tag_name": "v0.9.1",
+        "name": "0.9.1",
+        "body": "",
+        "html_url": "https://github.com/example/x",
+        "assets": [
+            {
+                "name": "ACARS-Print-Bridge-0.9.1-windows-x64.exe",
+                "browser_download_url": "https://example.test/app.exe",
+                "digest": f"sha256:{digest}",
+                "size": 12345,
+            }
+        ],
+    }
+    with _client_with(payload) as client:
+        release = fetch_latest_release(client=client)
+    assert release.digest == digest
+    assert release.size == 12345
+
+
+def test_fetch_latest_parses_body_digest():
+    digest = "b" * 64
+    name = "ACARS-Print-Bridge-0.9.2-windows-x64.exe"
+    payload = {
+        "tag_name": "v0.9.2",
+        "name": "0.9.2",
+        "body": f"SHA256 ({name}) = {digest}",
+        "html_url": "https://github.com/example/x",
+        "assets": [
+            {
+                "name": name,
+                "browser_download_url": "https://example.test/app.exe",
+            }
+        ],
+    }
+    with _client_with(payload) as client:
+        release = fetch_latest_release(client=client)
+    assert release.digest == digest

@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import hashlib
+import logging
 import re
 import shutil
 import subprocess
@@ -14,6 +16,8 @@ from pathlib import Path
 import httpx
 
 from acars_bridge import __version__
+
+log = logging.getLogger(__name__)
 
 GITHUB_OWNER = "tebulrich"
 GITHUB_REPO = "acars-printer"
@@ -34,6 +38,8 @@ class ReleaseInfo:
     html_url: str
     asset_name: str
     download_url: str
+    digest: str | None = None
+    size: int | None = None
 
 
 class UpdateError(Exception):
@@ -122,6 +128,12 @@ def fetch_latest_release(client: httpx.Client | None = None) -> ReleaseInfo:
     name = str(asset.get("name") or "").strip()
     if not url or not name:
         raise UpdateError("Release asset is missing a download URL.")
+    digest = _asset_digest(asset) or _digest_from_body(str(data.get("body") or ""), name)
+    size_raw = asset.get("size")
+    try:
+        size = int(size_raw) if size_raw is not None else None
+    except (TypeError, ValueError):
+        size = None
     return ReleaseInfo(
         version=version,
         tag=tag,
@@ -130,7 +142,33 @@ def fetch_latest_release(client: httpx.Client | None = None) -> ReleaseInfo:
         html_url=str(data.get("html_url") or "").strip(),
         asset_name=name,
         download_url=url,
+        digest=digest,
+        size=size,
     )
+
+
+def _asset_digest(asset: dict) -> str | None:
+    """GitHub may publish digest as ``sha256:…`` on the asset."""
+    raw = str(asset.get("digest") or "").strip().lower()
+    if raw.startswith("sha256:"):
+        return raw.split(":", 1)[1].strip() or None
+    return None
+
+
+def _digest_from_body(body: str, asset_name: str) -> str | None:
+    """Parse ``SHA256 (name) = hex`` or ``hex  name`` lines from release notes."""
+    if not body or not asset_name:
+        return None
+    patterns = [
+        rf"SHA256\s*\({re.escape(asset_name)}\)\s*=\s*([A-Fa-f0-9]{{64}})",
+        rf"([A-Fa-f0-9]{{64}})\s+\*?{re.escape(asset_name)}\b",
+        rf"{re.escape(asset_name)}\s*[:=]\s*([A-Fa-f0-9]{{64}})",
+    ]
+    for pattern in patterns:
+        match = re.search(pattern, body)
+        if match:
+            return match.group(1).lower()
+    return None
 
 
 def check_for_update(
@@ -168,15 +206,33 @@ def download_release(
         with http.stream("GET", release.download_url) as response:
             response.raise_for_status()
             total = int(response.headers.get("Content-Length") or 0)
+            if release.size and total and release.size != total:
+                raise UpdateError("Download size does not match the GitHub asset.")
+            hasher = hashlib.sha256()
             done = 0
             with partial.open("wb") as handle:
                 for chunk in response.iter_bytes():
                     if not chunk:
                         continue
                     handle.write(chunk)
+                    hasher.update(chunk)
                     done += len(chunk)
                     if on_progress is not None:
-                        on_progress(done, total)
+                        on_progress(done, total or release.size or 0)
+        if release.size and done != release.size:
+            raise UpdateError("Downloaded file size does not match the GitHub asset.")
+        if release.digest:
+            actual = hasher.hexdigest().lower()
+            if actual != release.digest.lower():
+                raise UpdateError(
+                    "Downloaded update failed SHA-256 verification. "
+                    "Install cancelled."
+                )
+        else:
+            log.warning(
+                "Release has no SHA-256 digest; verifying size only (%s bytes)",
+                done,
+            )
         partial.replace(target)
     except httpx.HTTPError as exc:
         raise UpdateError(f"Download failed: {exc}") from exc
