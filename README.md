@@ -1,9 +1,9 @@
 # ACARS Print Bridge
 
-Printer bridge for Hoppie / SayIntentions.AI ACARS — not an aircraft ACARS
+Printer bridge for Hoppie / SayIntentions.AI ACARS - not an aircraft ACARS
 client and not a network station.
 
-It sits beside your aircraft’s own ACARS (in the sim) and prints what that
+It sits beside your aircraft's own ACARS (in the sim) and prints what that
 plane receives (CPDLC, telex, weather / ATIS, and similar) on a local thermal
 or Windows printer.
 
@@ -11,7 +11,7 @@ It does not open its own ACARS station session and does not send messages. On
 Connect it watches **flight-sim** traffic to the selected ACARS network
 (Hoppie or SayIntentions), forwards it to the real server, and prints from the
 replies. The Hoppie website and SayIntentions companion app keep working
-normally while Connected. The aircraft’s logon / API key is used as-is —
+normally while Connected. The aircraft's logon / API key is used as-is -
 nothing to enter in this app for authentication.
 
 ## Compatibility
@@ -47,8 +47,8 @@ Configure your **ACARS logon** in the aircraft:
 - **Hoppie:** code from [hoppie.nl/acars](https://www.hoppie.nl/acars/)
 - **SayIntentions:** API key from the [Pilot Portal](https://portal.sayintentions.ai/)
 
-Match **Settings → ACARS network** to that choice. This app does not store or
-override the aircraft key — the plane’s requests pass through unchanged.
+Match **Settings -> ACARS network** to that choice. This app does not store or
+override the aircraft key - the plane's requests pass through unchanged.
 
 ### 2. Install a printer Windows can see
 
@@ -60,7 +60,7 @@ already knows about.
 
 1. Get the latest Windows build from
    [Releases](https://github.com/tebulrich/acars-printer/releases)
-   (`ACARS-Print-Bridge-…-windows-x64.exe`).
+   (`ACARS-Print-Bridge-*-windows-x64.exe`).
 2. Run it. Accept the **Administrator / UAC** prompt. Without elevation Connect
    will fail.
 
@@ -76,25 +76,25 @@ Open the **Settings** tab:
 | ACARS network | **Hoppie** (default) or **SayIntentions.AI**. Must match the aircraft. |
 | Printer | Your POS / Windows printer. Use **Test print** / Format tab to confirm paper comes out. |
 | Callsign filter | Optional. Empty = print every flight seen on this PC for the selected network. Set e.g. `SWR14` to only print that callsign. |
-| Aircraft registration | Optional tail for the print header (Format tab). With a value: `D-AILA ----  DLH4MC 04AUG 1809Z`. Leave empty to omit the tail and `----` (callsign + time only). |
+| Aircraft registration | Optional tail for the print header. With a value: `D-AILA ----  DLH4MC 04AUG 1809Z`. Leave empty to omit the tail and `----` (callsign + time only). |
 | Paper width / cut | Match your roll (usually 80 mm). Leave cut/tear assist on for typical POS printers. |
-| Auto-connect | On by default — Connects when the app starts (still needs Administrator). |
-| Check for updates | On by default — looks for a newer GitHub release and offers one-click install of the Windows exe. |
+| Auto-connect | On by default - Connects when the app starts (still needs Administrator). |
+| Check for updates | On by default - looks for a newer GitHub release and offers one-click install of the Windows exe. |
 
 Click **Save settings**. Put the logon / API key and flight callsign in the
-**aircraft** ACARS pages. The plane’s client must send the requests; this
+**aircraft** ACARS pages. The plane's client must send the requests; this
 app only watches and prints.
 
 ### 5. Connect, then use the plane
 
-1. Click **Connect**. You should get a short “Connected” toast.
+1. Click **Connect**. You should get a short "Connected" toast.
 2. Leave this window running in the background.
-3. In the sim, use ACARS as usual (METAR, ATIS, CPDLC, company telex, …).
+3. In the sim, use ACARS as usual (METAR, ATIS, CPDLC, company telex, etc.).
 4. Printed copies should appear on the printer; the Messages list shows what was
    stored.
 
 **Refresh** reloads the message list and bridge status. **Debug** is only for
-troubleshooting (do not paste secrets into public chats — the log redacts
+troubleshooting (do not paste secrets into public chats - the log redacts
 stored values when it can).
 
 ### 6. When you are done
@@ -106,13 +106,13 @@ Click **Disconnect**, then close the app.
 - App running **as Administrator**? Connected?
 - Printer selected and **Test print** works?
 - Hoppie logon / SayIntentions API key correct **in the aircraft**?
-- Settings → ACARS network matches the aircraft?
-- Callsign filter empty, or exactly matching the plane’s callsign?
+- Settings -> ACARS network matches the aircraft?
+- Callsign filter empty, or exactly matching the plane's callsign?
 - Did the plane actually request something (weather / ATIS / etc.) after Connect?
 - Is ACARS coming from the **sim** (MSFS / P3D / X-Plane)? Only sim traffic is
   printed.
 - Aircraft clients that never talk to Hoppie / SayIntentions from this PC cannot
-  be printed this way (see [Compatibility](#compatibility) — e.g. PMDG, Fenix).
+  be printed this way (see [Compatibility](#compatibility), e.g. PMDG, Fenix).
 
 ## Requirements
 
@@ -166,6 +166,6 @@ uv run pytest
 - SayIntentions drop-in endpoint:
   [Integrate with SayIntentions.AI ACARS/CPDLC](https://kb.sayintentions.ai/article/integrate-with-sayintentions-ai-acars-cpdlc)
 - WinDivert 2.2.2 binaries used by the tap live under `third_party/WinDivert`
-  (LGPL; see that directory’s LICENSE)
+  (LGPL; see that directory's LICENSE)
 - App data (SQLite, optional legacy encrypted logon, tap CA certs, debug.log) is
   under `%LOCALAPPDATA%\acars-bridge\acars-bridge`
