@@ -9,15 +9,16 @@ from acars_bridge.printing.base import PrinterSettings
 
 
 class ThermalMessageFormatter:
-    """Format uplinks like a real flight-deck ACARS hardcopy strip.
+    """Format uplinks like SimBrief tickets from this app.
 
-    Layout matched to airline MU printouts:
+    Layout:
 
-        ACARS BEGIN
+        ACARS START
+        ================================
         D-AILA ----  DLH4MC 04AUG 1809Z
-
+        --------------------------------
         <body>
-
+        ================================
         ACARS END
 
     Registration is optional (Settings). If empty, omit both the tail and ``----``.
@@ -34,17 +35,20 @@ class ThermalMessageFormatter:
         title, body = self._title_and_body(message)
         reg = (settings.aircraft_registration or "").strip().upper() or None
         callsign = (message.callsign or "").strip().upper() or None
+        bar = "=" * max(8, width)
+        dash = "-" * max(8, width)
 
         lines: list[str] = [
-            "ACARS BEGIN",
+            "ACARS START",
+            bar,
             self._header_line(when, reg, callsign, width),
-            "",
+            dash,
         ]
         if title:
             lines.extend(self._wrap_lines(title.upper(), width))
         for body_line in body.split("\n"):
             lines.extend(self._wrap_lines(body_line.upper(), width))
-        lines.append("")
+        lines.append(bar)
         lines.append("ACARS END")
         lines.append("")
         return "\n".join(lines)

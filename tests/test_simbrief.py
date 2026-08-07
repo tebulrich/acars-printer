@@ -475,6 +475,62 @@ def test_watcher_final_t5_when_doors_always_closed(
     assert not watcher.state.doors_seen_open
 
 
+def test_fenix_skips_loadsheets(app_session, sample_plan: SimBriefFlightPlan) -> None:
+    from dataclasses import replace
+
+    from acars_bridge.simbrief.models import is_fenix_aircraft
+
+    now = datetime(2026, 8, 6, 12, 0, tzinfo=UTC)
+    plan = replace(
+        sample_plan,
+        ofp_id="OFP-FENIX",
+        aircraft_name="FENIX A320",
+        aircraft_icao="A320",
+        sched_out_utc=now + timedelta(minutes=4),
+    )
+    assert is_fenix_aircraft(plan)
+
+    class FakeClient:
+        def fetch_latest(self, user: str) -> SimBriefFlightPlan:
+            return plan
+
+    app_session.settings.set_simbrief_enabled(True)
+    app_session.settings.set_simbrief_user("pilot")
+    watcher = SimBriefWatcher(
+        settings=app_session.settings,
+        print_manager=app_session.print_manager,
+        sterile=app_session.sterile,
+        client=FakeClient(),  # type: ignore[arg-type]
+        _now_fn=lambda: 0.0,
+        _clock_fn=lambda _s: now,
+    )
+    snap = SimSnapshot(
+        connected=True, on_ground=True, ground_velocity_kt=0, main_door_open=False
+    )
+    watcher.tick(snap)
+    assert watcher.state.final_printed
+    assert watcher.state.phase == WatcherPhase.FINAL_PRINTED
+    types = [
+        r["message_type"]
+        for r in app_session.db.conn.execute(
+            "SELECT message_type FROM messages ORDER BY id"
+        ).fetchall()
+    ]
+    assert "flight_plan" in types
+    assert "takeoff_data" in types
+    assert "loadsheet_prelim" not in types
+    assert "loadsheet_final" not in types
+    # T−5 must not print a final either.
+    watcher.tick(snap)
+    types2 = [
+        r["message_type"]
+        for r in app_session.db.conn.execute(
+            "SELECT message_type FROM messages ORDER BY id"
+        ).fetchall()
+    ]
+    assert types2.count("loadsheet_final") == 0
+
+
 def test_print_ticket_no_acars_wrapper(app_session, sample_plan: SimBriefFlightPlan) -> None:
     body = render_flight_plan_ticket(sample_plan, width=32)
     result = app_session.print_manager.print_ticket(
@@ -489,6 +545,7 @@ def test_print_ticket_no_acars_wrapper(app_session, sample_plan: SimBriefFlightP
     ).fetchone()
     assert row["message_type"] == "flight_plan"
     assert "ACARS BEGIN" not in row["normalized_body"]
+    assert "ACARS START" in row["normalized_body"]
     for token in sample_plan.route.split():
         assert token in row["normalized_body"]
 

@@ -439,3 +439,8 @@ def is_eligible_for_autoprint(
     if plan.sched_out_utc is None:
         return False
     return plan.sched_out_utc >= (now - late_grace)
+
+
+def is_fenix_aircraft(plan: SimBriefFlightPlan) -> bool:
+    """Fenix A32x OFPs carry 'FENIX' in the SimBrief aircraft name — they print their own loadsheet."""
+    return "FENIX" in (plan.aircraft_name or "").upper()

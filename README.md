@@ -135,19 +135,21 @@ aircraft where ACARS tap is limited (e.g. Fenix). When enabled:
    scheduled out in the future or within ~60 minutes past).
 2. On lock: prints **flight plan** (with **DATE** / STD / STA), **takeoff/weights**
    card (from the OFP), and **preliminary** loadsheet (full route).
+   **Fenix** airframes (SimBrief aircraft name contains `FENIX`) skip both
+   loadsheets — the aircraft EFB already prints them.
 3. **Final** loadsheet when doors close after boarding (preferred). If doors
    never open / stay closed, falls back to T−5 before SOBT (sim Zulu if
    SimConnect is up, else wall UTC) or sustained taxi GS 3–40 kt — never while
-   sterile or while doors are still open.
+   sterile or while doors are still open. Skipped for Fenix.
 4. If takeoff happens without a final, prints the missed final **once after
-   landing** (not in climb).
+   landing** (not in climb). Skipped for Fenix.
 5. Unlocks after landing + grace (default 10 minutes), or earlier on a new OFP /
    Unlock / max lock (8 h). Unlock lets the same OFP lock again.
 
 **Print OFP** forces FP + takeoff data + prelim for the latest plan (not the
-final — that still prints once via door-close / T−5 / taxi). Deferred if
-sterile. Mid-flight app restarts restore the locked OFP from settings so final /
-missed-final logic can continue.
+final — that still prints once via door-close / T−5 / taxi). Fenix: FP + takeoff
+only. Deferred if sterile. Mid-flight app restarts restore the locked OFP from
+settings so final / missed-final logic can continue.
 
 Requires a SimBrief username or numeric pilot ID. SimConnect DLLs ship under
 `third_party/SimConnect` for MSFS sterile timing and the SIM clock chip.

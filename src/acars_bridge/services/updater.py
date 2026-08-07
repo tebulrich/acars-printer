@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import hashlib
 import logging
+import os
 import re
 import shutil
 import subprocess
@@ -253,9 +254,14 @@ def schedule_windows_replace_and_restart(
     *,
     new_exe: Path,
     current_exe: Path,
-    wait_seconds: int = 3,
+    wait_seconds: int = 2,
 ) -> Path:
-    """Write a helper script that replaces the running exe after this process exits."""
+    """Write a helper script that replaces the running exe after this process exits.
+
+    Uses a stable LocalAppData TEMP for the relaunched PyInstaller onefile extract
+    (avoids ``Failed to load Python DLL …\\Temp\\_MEI…\\python312.dll`` when the
+    system TEMP on another drive is cleaned mid-start).
+    """
     if sys.platform != "win32":
         raise UpdateError("Automatic install is only supported on Windows.")
     new_exe = new_exe.resolve()
@@ -266,29 +272,55 @@ def schedule_windows_replace_and_restart(
     # Stage next to the running exe so the move stays on one volume when possible.
     staged = current_exe.with_name(current_exe.stem + ".new.exe")
     shutil.copy2(new_exe, staged)
+    _unblock_windows_file(staged)
+    _unblock_windows_file(new_exe)
+
+    pid = os.getpid()
+    work_dir = current_exe.parent
+    # Stable extract dir — not D:\\Temp / %TEMP% which some cleaners wipe.
+    local = Path(os.environ.get("LOCALAPPDATA") or tempfile.gettempdir())
+    pyi_tmp = local / "acars-bridge" / "acars-bridge" / "pyi-tmp"
+    pyi_tmp.mkdir(parents=True, exist_ok=True)
 
     script = Path(tempfile.gettempdir()) / "acars-bridge-update.cmd"
-    # cmd.exe delayed replace: wait, swap, relaunch elevated-capable exe, clean up.
+    # Wait for this PID to exit, retry replace, unblock MOTW, relaunch with safe TEMP.
     script.write_text(
         "\r\n".join(
             [
                 "@echo off",
-                "setlocal",
-                "set /a tries=0",
+                "setlocal EnableExtensions",
+                f'set "TARGET={current_exe}"',
+                f'set "STAGED={staged}"',
+                f'set "WORKDIR={work_dir}"',
+                f'set "PYITMP={pyi_tmp}"',
+                f"set OLD_PID={pid}",
                 f"timeout /t {max(1, wait_seconds)} /nobreak >nul",
+                ":waitpid",
+                'tasklist /FI "PID eq %OLD_PID%" 2>nul | find "%OLD_PID%" >nul',
+                "if not errorlevel 1 (",
+                "  timeout /t 1 /nobreak >nul",
+                "  goto waitpid",
+                ")",
+                "set /a tries=0",
                 ":retry",
                 "set /a tries+=1",
-                f'move /Y "{staged}" "{current_exe}" >nul 2>&1',
+                'move /Y "%STAGED%" "%TARGET%" >nul 2>&1',
                 "if not errorlevel 1 goto launch",
-                "if %tries% GEQ 30 (",
-                f'  echo Update failed: could not replace "{current_exe}"',
+                "if %tries% GEQ 45 (",
+                '  echo Update failed: could not replace "%TARGET%"',
+                "  echo Close all ACARS Print Bridge windows / Task Manager entries and try again.",
                 "  pause",
                 "  exit /b 1",
                 ")",
                 "timeout /t 1 /nobreak >nul",
                 "goto retry",
                 ":launch",
-                f'start "" "{current_exe}"',
+                "timeout /t 2 /nobreak >nul",
+                "powershell -NoProfile -ExecutionPolicy Bypass -Command \"try { Unblock-File -LiteralPath '%TARGET%' -ErrorAction SilentlyContinue } catch {}\"",
+                'if not exist "%PYITMP%" mkdir "%PYITMP%" >nul 2>&1',
+                'set "TEMP=%PYITMP%"',
+                'set "TMP=%PYITMP%"',
+                'start "" /D "%WORKDIR%" "%TARGET%"',
                 'del "%~f0" >nul 2>&1',
                 "",
             ]
@@ -301,6 +333,29 @@ def schedule_windows_replace_and_restart(
         ["cmd.exe", "/c", str(script)],
         close_fds=True,
         creationflags=creationflags,
-        cwd=str(current_exe.parent),
+        cwd=str(work_dir),
+        env={**os.environ, "TEMP": str(pyi_tmp), "TMP": str(pyi_tmp)},
     )
     return script
+
+
+def _unblock_windows_file(path: Path) -> None:
+    """Clear Mark-of-the-Web so SmartScreen does not break PyInstaller extract."""
+    if sys.platform != "win32":
+        return
+    try:
+        subprocess.run(
+            [
+                "powershell",
+                "-NoProfile",
+                "-ExecutionPolicy",
+                "Bypass",
+                "-Command",
+                f'Unblock-File -LiteralPath "{path}" -ErrorAction SilentlyContinue',
+            ],
+            check=False,
+            capture_output=True,
+            timeout=15,
+        )
+    except (OSError, subprocess.SubprocessError):
+        pass

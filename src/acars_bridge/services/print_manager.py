@@ -66,7 +66,7 @@ class PrintManager:
         sender: str = "SIMBRIEF",
         is_reprint: bool = False,
     ) -> str:
-        """Print a dispatch ticket as-is (no ACARS BEGIN/END wrapper)."""
+        """Print a dispatch ticket as-is (no ACARS START/END wrapper)."""
         digest = hashlib.sha256(f"{ticket_type}\n{body}".encode()).hexdigest()[:24]
         stamp = datetime.now(UTC).strftime("%Y%m%d%H%M%S%f")
         fingerprint = f"ticket:{ticket_type}:{digest}:{stamp}"
