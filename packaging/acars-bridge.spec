@@ -188,7 +188,9 @@ exe = EXE(
     strip=False,
     upx=False,
     upx_exclude=[],
-    runtime_tmpdir=None,
+    # Avoid system TEMP (often D:\Temp with cleaners/AV) — unpack MEI under LocalAppData.
+    # Bootloader expands %LOCALAPPDATA% at runtime on Windows.
+    runtime_tmpdir=r"%LOCALAPPDATA%\acars-bridge\acars-bridge\pyi-tmp",
     console=False,
     disable_windowed_traceback=False,
     argv_emulation=False,
