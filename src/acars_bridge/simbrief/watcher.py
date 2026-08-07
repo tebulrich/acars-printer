@@ -18,7 +18,11 @@ from acars_bridge.simbrief.loadsheet import (
     build_preliminary_values,
 )
 from acars_bridge.simbrief.models import SimBriefFlightPlan, is_eligible_for_autoprint
-from acars_bridge.simbrief.tickets import render_flight_plan_ticket, render_loadsheet_ticket
+from acars_bridge.simbrief.tickets import (
+    render_flight_plan_ticket,
+    render_loadsheet_ticket,
+    render_takeoff_data_ticket,
+)
 from acars_bridge.simconnect.monitor import SimSnapshot
 
 log = logging.getLogger(__name__)
@@ -46,6 +50,8 @@ class WatcherState:
     on_ground_since: float | None = None
     post_landing_since: float | None = None
     rolling_since: float | None = None
+    doors_seen_open: bool = False
+    doors_closed_since: float | None = None
     status: str = "idle"
     plan: SimBriefFlightPlan | None = None
     final_values: LoadsheetValues | None = None
@@ -61,6 +67,8 @@ class WatcherConfig:
     taxi_gs_max_kt: float = 40.0
     # Sustained ground roll before auto-printing the final loadsheet.
     taxi_roll_seconds: float = 10.0
+    # After doors were seen open, print final once they stay closed this long.
+    door_close_seconds: float = 2.0
     airborne_debounce_seconds: float = 15.0
     landing_debounce_seconds: float = 60.0
     post_landing_grace_seconds: float = 600.0
@@ -304,15 +312,19 @@ class SimBriefWatcher:
         self.state.on_ground_since = None
         self.state.post_landing_since = None
         self.state.rolling_since = None
+        self.state.doors_seen_open = False
+        self.state.doors_closed_since = None
         self.state.final_values = build_final_values(
             plan, randomize=self.settings.simbrief_randomize_final()
         )
         self.settings.set_simbrief_last_ofp_id(plan.ofp_id)
 
         if print_all_three:
-            self._print_bundle(self._bundle_all_three(plan), label="print-now")
-            self.state.final_printed = True
-            self.state.phase = WatcherPhase.FINAL_PRINTED
+            # Manual Print OFP: FP + takeoff + prelim only. Final prints once
+            # at door-close / T−5 / taxi — including it here caused a duplicate.
+            self._print_bundle(self._bundle_fp_prelim(plan), label="print-now")
+            self.state.final_printed = False
+            self.state.phase = WatcherPhase.LOCKED
             self.state.status = f"print now · {plan.callsign}"
         else:
             self._print_bundle(self._bundle_fp_prelim(plan), label="lock")
@@ -322,24 +334,48 @@ class SimBriefWatcher:
     def _should_print_final(self, snapshot: SimSnapshot | None, now_utc: datetime) -> bool:
         if self.state.final_printed or self.state.plan is None:
             return False
-        if self.sterile.is_sterile:
+        if self.sterile.is_blocking:
             return False
 
         plan = self.state.plan
-        # Clock: T-5 before SOBT
+        now_mono = self._now_fn()
+        door: bool | None = None
+
+        if snapshot is not None and snapshot.connected and snapshot.on_ground:
+            door = snapshot.main_door_open
+            # Preferred: doors were open (boarding), then closed and stay closed.
+            if door is True:
+                self.state.doors_seen_open = True
+                self.state.doors_closed_since = None
+            elif door is False and self.state.doors_seen_open:
+                if self.state.doors_closed_since is None:
+                    self.state.doors_closed_since = now_mono
+                elif (now_mono - self.state.doors_closed_since) >= self.config.door_close_seconds:
+                    return True
+            else:
+                # Unknown / never opened — do not arm door trigger.
+                self.state.doors_closed_since = None
+        else:
+            self.state.doors_closed_since = None
+
+        # Still boarding — wait for close (missed-final covers never-closed).
+        if door is True:
+            self.state.rolling_since = None
+            return False
+
+        # Fallback when doors never opened / always closed / unknown: T−5 SOBT.
         if plan.sched_out_utc is not None:
             lead = timedelta(seconds=self.config.final_before_offblock_seconds)
             if now_utc >= (plan.sched_out_utc - lead):
                 return True
 
-        # Latest trigger: sustained taxi roll on the ground (not airborne).
         if snapshot is None or not snapshot.connected or not snapshot.on_ground:
             self.state.rolling_since = None
             return False
 
+        # Fallback: sustained taxi roll on the ground (not airborne).
         gs = snapshot.ground_velocity_kt
         rolling = self.config.taxi_gs_min_kt < gs < self.config.taxi_gs_max_kt
-        now_mono = self._now_fn()
         if rolling:
             self.state.motion_seen = True
             if self.state.rolling_since is None:
@@ -361,20 +397,8 @@ class SimBriefWatcher:
         prelim = build_preliminary_values(plan)
         return [
             ("flight_plan", render_flight_plan_ticket(plan, width=width)),
+            ("takeoff_data", render_takeoff_data_ticket(plan, width=width)),
             ("loadsheet_prelim", render_loadsheet_ticket(plan, "PRELIMINARY", prelim, width=width)),
-        ]
-
-    def _bundle_all_three(self, plan: SimBriefFlightPlan) -> PrintBundle:
-        width = self._ticket_width()
-        prelim = build_preliminary_values(plan)
-        final = self.state.final_values or build_final_values(
-            plan, randomize=self.settings.simbrief_randomize_final()
-        )
-        self.state.final_values = final
-        return [
-            ("flight_plan", render_flight_plan_ticket(plan, width=width)),
-            ("loadsheet_prelim", render_loadsheet_ticket(plan, "PRELIMINARY", prelim, width=width)),
-            ("loadsheet_final", render_loadsheet_ticket(plan, "FINAL", final, width=width)),
         ]
 
     def _ticket_width(self) -> int:
@@ -495,6 +519,8 @@ class SimBriefWatcher:
             "on_ground_since": self.state.on_ground_since,
             "post_landing_since": self.state.post_landing_since,
             "rolling_since": self.state.rolling_since,
+            "doors_seen_open": self.state.doors_seen_open,
+            "doors_closed_since": self.state.doors_closed_since,
             "status": self.state.status,
             "backoff_seconds": self.state.backoff_seconds,
             "next_poll_at": self.state.next_poll_at,
@@ -527,6 +553,8 @@ class SimBriefWatcher:
         self.state.on_ground_since = blob.get("on_ground_since")
         self.state.post_landing_since = blob.get("post_landing_since")
         self.state.rolling_since = blob.get("rolling_since")
+        self.state.doors_seen_open = bool(blob.get("doors_seen_open"))
+        self.state.doors_closed_since = blob.get("doors_closed_since")
         self.state.status = str(blob.get("status") or phase.value)
         self.state.backoff_seconds = float(blob.get("backoff_seconds") or 0.0)
         self.state.next_poll_at = float(blob.get("next_poll_at") or 0.0)

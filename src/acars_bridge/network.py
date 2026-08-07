@@ -1,9 +1,12 @@
-"""ACARS network providers (Hoppie, SayIntentions.AI).
+"""ACARS network providers (Hoppie, SayIntentions.AI, PMDG GFO).
 
 SayIntentions exposes a drop-in Hoppie-protocol endpoint:
 https://kb.sayintentions.ai/article/integrate-with-sayintentions-ai-acars-cpdlc
 
-Both networks use the same coexistence model:
+PMDG 777/737 use a proprietary JSON datalink API at gfo.pmdg.com (not Hoppie
+wire format). Select **PMDG GFO** in Settings when flying those aircraft.
+
+Coexistence (Hoppie / SayIntentions):
 
 - **No hosts-file redirect** — browsers and companion apps keep a direct path.
 - **WinDivert only for flight-sim processes** — aircraft ACARS is MITM'd; the
@@ -34,6 +37,14 @@ _SAYINTENTIONS_DENYLIST = (
 class AcarsNetwork(StrEnum):
     HOPPIE = "hoppie"
     SAYINTENTIONS = "sayintentions"
+    PMDG_GFO = "pmdg_gfo"
+
+
+class WireFormat(StrEnum):
+    """How the selected network encodes ACARS over HTTPS."""
+
+    HOPPIE = "hoppie"  # connect.html form posts
+    GFO = "gfo"  # PMDG JSON /api/datalink/*
 
 
 @dataclass(frozen=True, slots=True)
@@ -51,6 +62,7 @@ class NetworkProfile:
     """Hostnames covered by the MITM certificate (hosts redirect when enabled)."""
 
     connect_path: str = "/acars/system/connect.html"
+    wire_format: WireFormat = WireFormat.HOPPIE
     hosts_redirect: bool = False
     """Install hosts-file redirect to 127.0.0.1 while Connected (off by default)."""
 
@@ -82,6 +94,16 @@ _PROFILES: dict[AcarsNetwork, NetworkProfile] = {
         hosts_redirect=False,
         divert_process_allowlist=_SIM_PROCESS_ALLOWLIST,
         divert_process_denylist=_SAYINTENTIONS_DENYLIST,
+    ),
+    AcarsNetwork.PMDG_GFO: NetworkProfile(
+        id=AcarsNetwork.PMDG_GFO,
+        label="PMDG GFO",
+        primary_host="gfo.pmdg.com",
+        tap_hosts=("gfo.pmdg.com",),
+        connect_path="/api/datalink/uplink",
+        wire_format=WireFormat.GFO,
+        hosts_redirect=False,
+        divert_process_allowlist=_SIM_PROCESS_ALLOWLIST,
     ),
 }
 

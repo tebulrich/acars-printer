@@ -39,5 +39,9 @@ def test_settings_network_default_and_switch(app_session):
     assert "sayintentions.ai" in settings.hoppie_url()
     assert settings.network_profile().hosts_redirect is False
 
+    settings.set_acars_network(AcarsNetwork.PMDG_GFO)
+    assert settings.acars_network() is AcarsNetwork.PMDG_GFO
+    assert settings.network_profile().primary_host == "gfo.pmdg.com"
+
     settings.set_acars_network("bogus")
     assert settings.acars_network() is AcarsNetwork.HOPPIE

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from acars_bridge.hoppie.cpdlc import CpdlcPacket
 from acars_bridge.hoppie.errors import CallsignInUseError, HoppieError
+from acars_bridge.hoppie.sanitize import scrub_message_body
 from acars_bridge.hoppie.types import HoppieMessage, MessageType
 
 
@@ -110,4 +111,4 @@ def _normalize_body(packet: str, message_type: MessageType) -> str:
     lines = [line.rstrip() for line in body.split("\n")]
     while lines and lines[-1] == "":
         lines.pop()
-    return "\n".join(lines)
+    return scrub_message_body("\n".join(lines))

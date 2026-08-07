@@ -10,10 +10,10 @@ from collections.abc import Callable
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 
-from acars_bridge.network import NetworkProfile
+from acars_bridge.network import NetworkProfile, WireFormat
 from acars_bridge.services.session import AppSession
 from acars_bridge.tap.divert import HoppieForceRedirect
-from acars_bridge.tap.extract import messages_from_hoppie_exchange
+from acars_bridge.tap.extract import messages_from_gfo_exchange, messages_from_hoppie_exchange
 from acars_bridge.tap.hosts import install_tap_hosts, remove_tap_hosts
 from acars_bridge.tap.proxy import HoppieForwardProxy, ProxyConfig
 from acars_bridge.tap.tls_certs import ensure_tap_certs, install_ca_trust
@@ -143,17 +143,24 @@ class TapService:
             # Leave DNS alone so companion apps (SayIntentions) keep a direct path.
             self._hosts_owned = False
         fill_from = (self._session.settings.callsign() or "").strip().upper() or None
+        if profile.wire_format is WireFormat.GFO:
+            fill_from = None
+        # Prefer leaf+CA chain so the sim validates against the key we just installed.
+        chain = cert_dir / "tap-server-chain.pem"
+        serve_cert = chain if chain.is_file() else server_cert
         proxy = HoppieForwardProxy(
             ProxyConfig(
                 upstream_host=profile.primary_host,
                 upstream_ip=upstream_ip,
-                server_cert=server_cert,
+                server_cert=serve_cert,
                 server_key=server_key,
                 enable_https=True,
                 fill_from_callsign=fill_from,
+                wire_format=profile.wire_format.value,
             ),
             on_exchange=self._on_exchange,
             on_debug=self._on_debug,
+            on_tls_failure=self._on_tls_failure,
         )
         proxy.start()
         self._proxy = proxy
@@ -187,13 +194,36 @@ class TapService:
                 }
         self._emit()
 
+    def _on_tls_failure(self, count: int, detail: str) -> None:
+        """Stop stealing HTTPS so the plane can reach the real host again."""
+        host = self.status.upstream_host or "upstream"
+        if self._divert is not None:
+            self._divert.set_https_redirect(False)
+        note = (
+            f"TLS MITM failed {count}x — HTTPS passthrough ON so the aircraft "
+            f"can reach {host} again. Disconnect/Connect after fixing certs, "
+            f"or restart MSFS. Detail: {detail}"
+        )
+        self.status.last_error = note
+        if self._on_debug:
+            self._on_debug(note)
+        self._emit()
+
     def _on_exchange(self, form: dict[str, str], response_text: str) -> None:
         callsign = self._session.settings.callsign() or None
-        messages, force_print = messages_from_hoppie_exchange(
-            request_form=form,
-            response_text=response_text,
-            callsign_filter=callsign,
-        )
+        profile = self._session.settings.network_profile()
+        if profile.wire_format is WireFormat.GFO:
+            messages, force_print = messages_from_gfo_exchange(
+                request_path=form.get("path") or "",
+                response_text=response_text,
+                callsign_filter=callsign,
+            )
+        else:
+            messages, force_print = messages_from_hoppie_exchange(
+                request_form=form,
+                response_text=response_text,
+                callsign_filter=callsign,
+            )
         stats = {
             "stored": 0,
             "printed": 0,
@@ -205,8 +235,8 @@ class TapService:
         elif self._on_debug:
             self._on_debug(
                 f"no printable messages type={form.get('type')!r} "
-                f"from={form.get('from')!r} filter={callsign!r} "
-                f"resp={response_text[:100]!r}"
+                f"from={form.get('from')!r} path={form.get('path')!r} "
+                f"filter={callsign!r} resp={response_text[:100]!r}"
             )
         with self._lock:
             self._refresh_counters_unlocked()

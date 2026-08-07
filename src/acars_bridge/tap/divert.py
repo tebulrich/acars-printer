@@ -68,6 +68,10 @@ class HoppieForceRedirect:
     def upstream_ips(self) -> frozenset[str]:
         return self._upstream_ips
 
+    def set_https_redirect(self, enabled: bool) -> None:
+        """Enable/disable HTTPS reflection at runtime (HTTP :80 unchanged)."""
+        self._redirect_https = bool(enabled)
+
     def start(self) -> None:
         if self._thread and self._thread.is_alive():
             return

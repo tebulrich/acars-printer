@@ -1,4 +1,4 @@
 """ACARS Print Bridge — Hoppie / SayIntentions ACARS printer bridge (not an aircraft client)."""
 
-__version__ = "0.5.6"
+__version__ = "0.6.0"
 

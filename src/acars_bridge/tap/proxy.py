@@ -15,6 +15,8 @@ from urllib.parse import parse_qsl, urlencode
 log = logging.getLogger(__name__)
 
 ExchangeHandler = Callable[[dict[str, str], str], None]
+# req_head, req_body, resp_head, resp_body (wire bytes; response may still be gzip'd)
+RawExchangeHandler = Callable[[bytes, bytes, bytes, bytes], None]
 
 
 @dataclass(slots=True)
@@ -28,6 +30,8 @@ class ProxyConfig:
     enable_https: bool = True
     # When the aircraft sends from= empty, fill this callsign before Hoppie sees it.
     fill_from_callsign: str | None = None
+    # "hoppie" (connect.html) or "gfo" (PMDG JSON datalink).
+    wire_format: str = "hoppie"
 
 
 class HoppieForwardProxy:
@@ -39,18 +43,27 @@ class HoppieForwardProxy:
         on_exchange: ExchangeHandler,
         *,
         on_debug: Callable[[str], None] | None = None,
+        on_raw_exchange: RawExchangeHandler | None = None,
+        on_tls_failure: Callable[[int, str], None] | None = None,
+        tls_failure_limit: int = 3,
     ) -> None:
         self._config = config
         self._on_exchange = on_exchange
         self._on_debug = on_debug
+        self._on_raw_exchange = on_raw_exchange
+        self._on_tls_failure = on_tls_failure
+        self._tls_failure_limit = max(1, tls_failure_limit)
         self._stop = threading.Event()
         self._threads: list[threading.Thread] = []
         self._sockets: list[socket.socket] = []
         self.exchanges = 0
+        self.raw_exchanges = 0
+        self.tls_failures = 0
         self.last_error: str | None = None
         self._worker_sema = threading.BoundedSemaphore(32)
         self._active_workers = 0
         self._worker_lock = threading.Lock()
+        self._tls_fallback_armed = False
 
     def _debug(self, message: str) -> None:
         if self._on_debug:
@@ -161,7 +174,9 @@ class HoppieForwardProxy:
             head, body = request
             form = _form_from_http(head, body)
             req_path = _request_path(head)
-            if "connect.html" in req_path.lower() and (
+            is_gfo = (self._config.wire_format or "hoppie").lower() == "gfo"
+
+            if not is_gfo and "connect.html" in req_path.lower() and (
                 form.get("type") or form.get("logon") or form.get("packet")
             ):
                 head, body, notes = _patch_hoppie_credentials(
@@ -175,7 +190,9 @@ class HoppieForwardProxy:
                     self._debug("patched " + ", ".join(notes))
 
             self._debug(
-                f"http req type={form.get('type') or '-'} "
+                f"http req format={self._config.wire_format} "
+                f"path={req_path[:80]!r} "
+                f"type={form.get('type') or '-'} "
                 f"from={form.get('from') or '-'} "
                 f"logon={'set' if form.get('logon') else '-'} "
                 f"body_len={len(body)}"
@@ -198,10 +215,38 @@ class HoppieForwardProxy:
             resp_head, resp_body = response
             client.sendall(resp_head + resp_body)
 
+            if self._on_raw_exchange is not None:
+                try:
+                    self._on_raw_exchange(head, body, resp_head, resp_body)
+                    self.raw_exchanges += 1
+                except Exception as exc:  # noqa: BLE001
+                    self._debug(f"raw tap failed: {exc}")
+
             try:
                 text = _decode_response_body(resp_head, resp_body)
             except Exception as exc:  # noqa: BLE001
                 self._debug(f"tap decode failed: {exc}")
+                return
+
+            if is_gfo:
+                if not _looks_like_gfo(req_path, text):
+                    self._debug(f"ignored non-gfo http path={req_path[:60]!r}")
+                    return
+                self.exchanges += 1
+                # Stash path for TapService (form is empty for JSON POSTs).
+                form = {
+                    **form,
+                    "type": "gfo_uplink" if "uplink" in req_path.lower() else "gfo_downlink",
+                    "path": req_path,
+                }
+                self._debug(
+                    f"gfo exchange path={req_path[:60]!r} "
+                    f"body_len={len(body)} resp={text[:80]!r}"
+                )
+                try:
+                    self._on_exchange(form, text)
+                except Exception as exc:  # noqa: BLE001
+                    self._debug(f"tap parse failed: {exc}")
                 return
 
             if not _looks_like_hoppie(form, text, req_path):
@@ -232,10 +277,22 @@ class HoppieForwardProxy:
                 self._debug(f"tap parse failed: {exc}")
         except ssl.SSLError as exc:
             # Typical when the peer pins the real SI/Hoppie cert or ignores our CA.
+            # Also seen when two Root CAs share the same subject DN (wrong key).
+            self.tls_failures += 1
             self.last_error = (
                 f"TLS handshake failed (client rejected MITM cert?): {exc}"
             )
             self._debug(self.last_error)
+            if (
+                self._on_tls_failure is not None
+                and not self._tls_fallback_armed
+                and self.tls_failures >= self._tls_failure_limit
+            ):
+                self._tls_fallback_armed = True
+                try:
+                    self._on_tls_failure(self.tls_failures, str(exc))
+                except Exception as cb_exc:  # noqa: BLE001
+                    self._debug(f"tls failure callback failed: {cb_exc}")
         except Exception as exc:  # noqa: BLE001
             self.last_error = str(exc)
             self._debug(f"tap client error: {exc}")
@@ -512,6 +569,13 @@ def _looks_like_hoppie(form: dict[str, str], response_text: str, path: str = "")
         return True
     lowered = response_text.lstrip().lower()
     return lowered.startswith(("ok", "error"))
+
+
+def _looks_like_gfo(path: str, response_text: str) -> bool:
+    if "/api/datalink/" not in (path or "").lower():
+        return False
+    stripped = (response_text or "").lstrip()
+    return stripped.startswith("{") and "success" in stripped
 
 
 def _connect_upstream(upstream_ip: str) -> socket.socket:

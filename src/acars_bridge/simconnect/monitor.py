@@ -24,6 +24,8 @@ class SimSnapshot:
     zulu_seconds: float | None = None
     # True/False when known from SimConnect; None when disconnected / not yet sampled.
     battery_on: bool | None = None
+    # True when a main exit / interactive door is open; None when unknown.
+    main_door_open: bool | None = None
     detail: str = ""
 
 
@@ -145,6 +147,7 @@ class WindowsSimConnectMonitor:
                         zulu_day=snap.zulu_day,
                         zulu_seconds=snap.zulu_seconds,
                         battery_on=snap.battery_on,
+                        main_door_open=snap.main_door_open,
                         detail="inplace",
                     )
                 )

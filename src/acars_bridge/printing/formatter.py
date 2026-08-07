@@ -3,6 +3,7 @@ from __future__ import annotations
 from datetime import UTC, datetime
 
 from acars_bridge.hoppie.atis_text import inforeq_station_title
+from acars_bridge.hoppie.sanitize import scrub_message_body
 from acars_bridge.models.messages import StoredMessage
 from acars_bridge.printing.base import PrinterSettings
 
@@ -131,7 +132,7 @@ class ThermalMessageFormatter:
             inforeq_request_label,
         )
 
-        body = (message.normalized_body or "").rstrip()
+        body = scrub_message_body(message.normalized_body or "")
         if message.message_type != "inforeq":
             return None, body
 

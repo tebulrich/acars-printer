@@ -31,6 +31,10 @@ def test_copy_telemetry_from_dispatch_reads_after_header():
     payload.battery_master = 1.0
     payload.battery_master_1 = 0.0
     payload.battery_master_2 = 0.0
+    payload.exit_open_0 = 0.0
+    payload.exit_open_1 = 0.0
+    payload.interactive_open_0 = 0.8
+    payload.interactive_open_1 = 0.0
 
     blob = ctypes.create_string_buffer(
         ctypes.sizeof(SIMCONNECT_RECV_SIMOBJECT_DATA) + ctypes.sizeof(TelemetryData)
@@ -49,3 +53,5 @@ def test_copy_telemetry_from_dispatch_reads_after_header():
     assert copied.zulu_year == 2026.0
     assert copied.zulu_seconds == 3600.0
     assert copied.battery_master == 1.0
+    assert copied.interactive_open_0 == 0.8
+    assert ctypes.sizeof(TelemetryData) == 14 * 8

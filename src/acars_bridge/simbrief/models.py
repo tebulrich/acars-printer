@@ -33,6 +33,14 @@ def _prop(root: dict[str, Any], *path: str, default: str = "N/A") -> str:
     return text if text else default
 
 
+def _first_prop(root: dict[str, Any], *paths: tuple[str, ...], default: str = "N/A") -> str:
+    for path in paths:
+        value = _prop(root, *path, default="N/A")
+        if value != "N/A":
+            return value
+    return default
+
+
 def _format_altitude(feet_str: str) -> str:
     try:
         feet = int(float(feet_str))
@@ -57,7 +65,8 @@ def _format_duration_seconds(seconds_str: str) -> str:
     return f"{hours}h {minutes:02d}m"
 
 
-def _format_epoch_zulu(epoch_str: str) -> str:
+def _format_epoch_date(epoch_str: str) -> str:
+    """Format SimBrief epoch as ``01JAN30`` (Zulu calendar date)."""
     try:
         epoch = int(float(epoch_str))
     except (TypeError, ValueError):
@@ -65,7 +74,28 @@ def _format_epoch_zulu(epoch_str: str) -> str:
     if epoch <= 0:
         return "N/A"
     dt = datetime.fromtimestamp(epoch, tz=UTC)
-    return dt.strftime("%H:%M") + "Z"
+    return dt.strftime("%d%b%y").upper()
+
+
+def _format_epoch_time(epoch_str: str) -> str:
+    """Format SimBrief epoch as ``00:00Z``."""
+    try:
+        epoch = int(float(epoch_str))
+    except (TypeError, ValueError):
+        return "N/A"
+    if epoch <= 0:
+        return "N/A"
+    dt = datetime.fromtimestamp(epoch, tz=UTC)
+    return dt.strftime("%H:%MZ")
+
+
+def _format_epoch_zulu(epoch_str: str) -> str:
+    """Format SimBrief epoch as ``01JAN30 00:00Z`` (date + Zulu time)."""
+    date = _format_epoch_date(epoch_str)
+    time = _format_epoch_time(epoch_str)
+    if date == "N/A" or time == "N/A":
+        return "N/A"
+    return f"{date} {time}"
 
 
 def _parse_epoch(epoch_str: str) -> datetime | None:
@@ -113,6 +143,20 @@ class SimBriefFlightPlan:
     sched_out_zulu: str
     sched_in_zulu: str
     sched_out_utc: datetime | None
+    sched_in_utc: datetime | None = None
+    flight_date_zulu: str = "N/A"
+    # Optional OFP extras for takeoff / weights card (real SimBrief fields).
+    origin_runway: str = "N/A"
+    dest_runway: str = "N/A"
+    cost_index: str = "N/A"
+    trip_fuel: str = "N/A"
+    contingency_fuel: str = "N/A"
+    alternate_fuel: str = "N/A"
+    reserve_fuel: str = "N/A"
+    landing_fuel: str = "N/A"
+    est_ldw: str = "N/A"
+    avg_wind_comp: str = "N/A"
+    avg_temp_dev: str = "N/A"
 
     @classmethod
     def from_json(cls, root: dict[str, Any]) -> SimBriefFlightPlan:
@@ -122,7 +166,9 @@ class SimBriefFlightPlan:
         callsign = atc if atc != "N/A" else f"{airline}{flight_number}"
 
         sched_out_raw = _prop(root, "times", "sched_out")
+        sched_in_raw = _prop(root, "times", "sched_in")
         sched_out_utc = _parse_epoch(sched_out_raw)
+        sched_in_utc = _parse_epoch(sched_in_raw)
 
         ofp_id = _prop(root, "params", "request_id", default="")
         if not ofp_id or ofp_id == "N/A":
@@ -173,8 +219,25 @@ class SimBriefFlightPlan:
             pax_weight_avg=_prop(root, "weights", "pax_weight"),
             cargo_weight=_prop(root, "weights", "cargo"),
             sched_out_zulu=_format_epoch_zulu(sched_out_raw),
-            sched_in_zulu=_format_epoch_zulu(_prop(root, "times", "sched_in")),
+            sched_in_zulu=_format_epoch_zulu(sched_in_raw),
             sched_out_utc=sched_out_utc,
+            sched_in_utc=sched_in_utc,
+            flight_date_zulu=_format_epoch_date(sched_out_raw),
+            origin_runway=_prop(root, "origin", "plan_rwy"),
+            dest_runway=_prop(root, "destination", "plan_rwy"),
+            cost_index=_prop(root, "general", "costindex"),
+            trip_fuel=_first_prop(
+                root,
+                ("fuel", "enroute_burn"),
+                ("fuel", "plan_enroute"),
+            ),
+            contingency_fuel=_prop(root, "fuel", "contingency"),
+            alternate_fuel=_prop(root, "fuel", "alternate"),
+            reserve_fuel=_prop(root, "fuel", "reserve"),
+            landing_fuel=_prop(root, "fuel", "plan_landing"),
+            est_ldw=_prop(root, "weights", "est_ldw"),
+            avg_wind_comp=_prop(root, "general", "avg_wind_comp"),
+            avg_temp_dev=_prop(root, "general", "avg_temp_dev"),
         )
 
     def to_dict(self) -> dict[str, Any]:
@@ -212,19 +275,48 @@ class SimBriefFlightPlan:
             "sched_out_zulu": self.sched_out_zulu,
             "sched_in_zulu": self.sched_in_zulu,
             "sched_out_utc": self.sched_out_utc.isoformat() if self.sched_out_utc else None,
+            "sched_in_utc": self.sched_in_utc.isoformat() if self.sched_in_utc else None,
+            "flight_date_zulu": self.flight_date_zulu,
+            "origin_runway": self.origin_runway,
+            "dest_runway": self.dest_runway,
+            "cost_index": self.cost_index,
+            "trip_fuel": self.trip_fuel,
+            "contingency_fuel": self.contingency_fuel,
+            "alternate_fuel": self.alternate_fuel,
+            "reserve_fuel": self.reserve_fuel,
+            "landing_fuel": self.landing_fuel,
+            "est_ldw": self.est_ldw,
+            "avg_wind_comp": self.avg_wind_comp,
+            "avg_temp_dev": self.avg_temp_dev,
         }
 
     @classmethod
     def from_dict(cls, data: dict[str, Any]) -> SimBriefFlightPlan:
-        sched_raw = data.get("sched_out_utc")
-        sched_out: datetime | None = None
-        if isinstance(sched_raw, str) and sched_raw:
+        def _parse_iso(raw: object) -> datetime | None:
+            if not isinstance(raw, str) or not raw:
+                return None
             try:
-                sched_out = datetime.fromisoformat(sched_raw)
-                if sched_out.tzinfo is None:
-                    sched_out = sched_out.replace(tzinfo=UTC)
+                dt = datetime.fromisoformat(raw)
             except ValueError:
-                sched_out = None
+                return None
+            if dt.tzinfo is None:
+                dt = dt.replace(tzinfo=UTC)
+            return dt
+
+        sched_out = _parse_iso(data.get("sched_out_utc"))
+        sched_in = _parse_iso(data.get("sched_in_utc"))
+        flight_date = str(data.get("flight_date_zulu") or "N/A")
+        if flight_date == "N/A" and sched_out is not None:
+            flight_date = sched_out.strftime("%d%b%y").upper()
+        sched_out_zulu = str(data.get("sched_out_zulu") or "N/A")
+        sched_in_zulu = str(data.get("sched_in_zulu") or "N/A")
+        # Refresh display strings from datetimes so older locks pick up date.
+        if sched_out is not None:
+            sched_out_zulu = sched_out.strftime("%d%b%y %H:%M").upper() + "Z"
+            flight_date = sched_out.strftime("%d%b%y").upper()
+        if sched_in is not None:
+            sched_in_zulu = sched_in.strftime("%d%b%y %H:%M").upper() + "Z"
+
         return cls(
             ofp_id=str(data.get("ofp_id") or ""),
             callsign=str(data.get("callsign") or "N/A"),
@@ -256,9 +348,22 @@ class SimBriefFlightPlan:
             pax_count=str(data.get("pax_count") or "N/A"),
             pax_weight_avg=str(data.get("pax_weight_avg") or "N/A"),
             cargo_weight=str(data.get("cargo_weight") or "N/A"),
-            sched_out_zulu=str(data.get("sched_out_zulu") or "N/A"),
-            sched_in_zulu=str(data.get("sched_in_zulu") or "N/A"),
+            sched_out_zulu=sched_out_zulu,
+            sched_in_zulu=sched_in_zulu,
             sched_out_utc=sched_out,
+            sched_in_utc=sched_in,
+            flight_date_zulu=flight_date,
+            origin_runway=str(data.get("origin_runway") or "N/A"),
+            dest_runway=str(data.get("dest_runway") or "N/A"),
+            cost_index=str(data.get("cost_index") or "N/A"),
+            trip_fuel=str(data.get("trip_fuel") or "N/A"),
+            contingency_fuel=str(data.get("contingency_fuel") or "N/A"),
+            alternate_fuel=str(data.get("alternate_fuel") or "N/A"),
+            reserve_fuel=str(data.get("reserve_fuel") or "N/A"),
+            landing_fuel=str(data.get("landing_fuel") or "N/A"),
+            est_ldw=str(data.get("est_ldw") or "N/A"),
+            avg_wind_comp=str(data.get("avg_wind_comp") or "N/A"),
+            avg_temp_dev=str(data.get("avg_temp_dev") or "N/A"),
         )
 
     def placeholder_map(self) -> dict[str, str]:
@@ -281,8 +386,21 @@ class SimBriefFlightPlan:
             "CruiseAltitude": self.cruise_altitude,
             "DistanceNm": self.distance_nm,
             "FlightTimeFormatted": self.flight_time_formatted,
-            "SchedOutZulu": self.sched_out_zulu,
-            "SchedInZulu": self.sched_in_zulu,
+            "SchedOutZulu": (
+                self.sched_out_utc.strftime("%d%b%y %H:%M").upper() + "Z"
+                if self.sched_out_utc is not None
+                else self.sched_out_zulu
+            ),
+            "SchedInZulu": (
+                self.sched_in_utc.strftime("%d%b%y %H:%M").upper() + "Z"
+                if self.sched_in_utc is not None
+                else self.sched_in_zulu
+            ),
+            "FlightDate": (
+                self.sched_out_utc.strftime("%d%b%y").upper()
+                if self.sched_out_utc is not None
+                else self.flight_date_zulu
+            ),
             "Units": self.units,
             "BlockFuel": self.block_fuel,
             "TaxiFuel": self.taxi_fuel,
@@ -294,6 +412,17 @@ class SimBriefFlightPlan:
             "PaxCount": self.pax_count,
             "PaxWeightAvg": self.pax_weight_avg,
             "CargoWeight": self.cargo_weight,
+            "OriginRunway": self.origin_runway,
+            "DestRunway": self.dest_runway,
+            "CostIndex": self.cost_index,
+            "TripFuel": self.trip_fuel,
+            "ContingencyFuel": self.contingency_fuel,
+            "AlternateFuel": self.alternate_fuel,
+            "ReserveFuel": self.reserve_fuel,
+            "LandingFuel": self.landing_fuel,
+            "EstLdw": self.est_ldw,
+            "AvgWindComp": self.avg_wind_comp,
+            "AvgTempDev": self.avg_temp_dev,
         }
 
 

@@ -27,5 +27,10 @@ settings.key
 debug.log
 tap-certs/
 **/tap-certs/
+logs/
+
+# Alternate PyInstaller output when dist/ is locked
+build-new/
+dist-new/
 
 *.mdc

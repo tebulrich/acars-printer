@@ -201,8 +201,9 @@ class AcarsBridgeApp(QMainWindow):
 
         self.btn_ofp_print = QPushButton("Print")
         self.btn_ofp_print.setToolTip(
-            "Fetch latest SimBrief OFP and print FP + prelim + final "
-            "(simulator must be running)"
+            "Fetch latest SimBrief OFP and print flight plan + takeoff data + "
+            "preliminary loadsheet (simulator must be running). Final prints "
+            "automatically on door close / T-5 / taxi."
         )
         self.btn_ofp_print.clicked.connect(
             lambda: self._run_action("simbrief_print_now", self._simbrief_print_now)
@@ -583,7 +584,8 @@ class AcarsBridgeApp(QMainWindow):
         network.setCurrentIndex(idx if idx >= 0 else 0)
         network.setToolTip(
             "Which ACARS host this app intercepts. Must match the aircraft "
-            "(Hoppie logon → Hoppie; SayIntentions API key → SayIntentions)."
+            "(Hoppie logon → Hoppie; SayIntentions API key → SayIntentions; "
+            "PMDG 737/777 datalink → PMDG GFO)."
         )
 
         callsign = QLineEdit(self.session.settings.callsign() or "")
@@ -693,8 +695,9 @@ class AcarsBridgeApp(QMainWindow):
         btn_row.setSpacing(8)
         print_now = QPushButton("Print OFP now")
         print_now.setToolTip(
-            "Fetch latest SimBrief OFP and print FP + prelim + final "
-            "(simulator must be running)"
+            "Fetch latest SimBrief OFP and print flight plan + takeoff data + "
+            "preliminary loadsheet (simulator must be running). Final prints "
+            "automatically on door close / T-5 / taxi."
         )
         print_now.clicked.connect(
             lambda: self._run_action("simbrief_print_now", self._simbrief_print_now)

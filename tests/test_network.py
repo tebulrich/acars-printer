@@ -42,7 +42,19 @@ def test_all_tap_hosts_covers_both_networks():
     hosts = all_tap_hosts()
     assert "www.hoppie.nl" in hosts
     assert "acars.sayintentions.ai" in hosts
+    assert "gfo.pmdg.com" in hosts
     assert len(hosts) == len(set(hosts))
+
+
+def test_pmdg_gfo_profile():
+    from acars_bridge.network import WireFormat
+
+    profile = profile_for(AcarsNetwork.PMDG_GFO)
+    assert profile.primary_host == "gfo.pmdg.com"
+    assert profile.wire_format is WireFormat.GFO
+    assert profile.connect_path.startswith("/api/datalink/")
+    assert profile.hosts_redirect is False
+    assert any("flightsimulator" in s for s in profile.divert_process_allowlist)
 
 
 def test_process_matches():

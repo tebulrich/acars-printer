@@ -12,7 +12,11 @@ from acars_bridge.services.sterile import SterileGate, SterileThresholds, comput
 from acars_bridge.simbrief.client import SimBriefClient, SimBriefError
 from acars_bridge.simbrief.loadsheet import build_final_values, build_preliminary_values
 from acars_bridge.simbrief.models import SimBriefFlightPlan, is_eligible_for_autoprint
-from acars_bridge.simbrief.tickets import render_flight_plan_ticket, render_loadsheet_ticket
+from acars_bridge.simbrief.tickets import (
+    render_flight_plan_ticket,
+    render_loadsheet_ticket,
+    render_takeoff_data_ticket,
+)
 from acars_bridge.simbrief.watcher import SimBriefWatcher, WatcherConfig, WatcherPhase
 from acars_bridge.simconnect.monitor import SimSnapshot
 
@@ -34,6 +38,11 @@ def test_parse_ofp_fields(sample_plan: SimBriefFlightPlan) -> None:
     assert "CINDY8S" in sample_plan.route
     assert sample_plan.cruise_altitude == "FL350"
     assert sample_plan.sched_out_utc is not None
+    assert sample_plan.origin_runway == "25C"
+    assert sample_plan.dest_runway == "26L"
+    assert sample_plan.cost_index == "30"
+    assert sample_plan.trip_fuel == "4500"
+    assert sample_plan.est_ldw == "59500"
 
 
 def test_eligibility_future_and_stale(sample_plan: SimBriefFlightPlan) -> None:
@@ -75,9 +84,23 @@ def test_tickets_keep_full_route(sample_plan: SimBriefFlightPlan) -> None:
     for token in sample_plan.route.split():
         assert token in text
     assert "ACARS START" in text
+    assert "01JAN30" in text
+    assert "DATE:" in text
+    assert "STD:" in text
+    assert "STA:" in text
     prelim = build_preliminary_values(sample_plan)
     sheet = render_loadsheet_ticket(sample_plan, "PRELIMINARY", prelim, width=32)
     assert "LOAD SHEET" in sheet
+    assert "01JAN30" in sheet
+    assert "STD:" in sheet
+    takeoff = render_takeoff_data_ticket(sample_plan, width=32)
+    assert "TAKEOFF DATA" in takeoff
+    assert "DEP RWY:" in takeoff
+    assert "25C" in takeoff
+    assert "TRIP FUEL:" in takeoff
+    assert "4500" in takeoff
+    assert "01JAN30" in takeoff
+    assert "STD:" in takeoff
     assert "PRELIMINARY" in sheet
     assert "ACARS START" in sheet
     assert "ACARS END" in sheet
@@ -322,7 +345,7 @@ def test_watcher_lock_final_missed_and_landing(app_session, sample_plan: SimBrie
     watcher.tick(ground)
     assert watcher.state.phase == WatcherPhase.LOCKED
     jobs = app_session.db.conn.execute("SELECT COUNT(*) AS c FROM print_jobs").fetchone()["c"]
-    assert jobs == 2  # FP + prelim
+    assert jobs == 3  # FP + takeoff data + prelim
 
     # Taxi GS — need sustained roll (10s) before final
     taxi = SimSnapshot(connected=True, on_ground=True, ground_velocity_kt=8, alt_agl_ft=0)
@@ -358,6 +381,98 @@ def test_watcher_lock_final_missed_and_landing(app_session, sample_plan: SimBrie
     mono["t"] += 6
     watcher.tick(land)
     assert watcher.state.phase == WatcherPhase.POLLING
+
+
+def test_watcher_final_on_door_close(app_session, sample_plan: SimBriefFlightPlan) -> None:
+    from dataclasses import replace
+
+    now = datetime(2026, 8, 6, 12, 0, tzinfo=UTC)
+    plan = replace(
+        sample_plan,
+        ofp_id="OFP-DOORS",
+        sched_out_utc=now + timedelta(hours=2),
+    )
+
+    class FakeClient:
+        def fetch_latest(self, user: str) -> SimBriefFlightPlan:
+            return plan
+
+    mono = {"t": 1000.0}
+    app_session.settings.set_simbrief_enabled(True)
+    app_session.settings.set_simbrief_user("pilot")
+    watcher = SimBriefWatcher(
+        settings=app_session.settings,
+        print_manager=app_session.print_manager,
+        sterile=app_session.sterile,
+        client=FakeClient(),  # type: ignore[arg-type]
+        config=WatcherConfig(door_close_seconds=2.0, taxi_roll_seconds=30.0),
+        _now_fn=lambda: mono["t"],
+        _clock_fn=lambda _s: now,
+    )
+
+    closed = SimSnapshot(
+        connected=True, on_ground=True, ground_velocity_kt=0, main_door_open=False
+    )
+    watcher.tick(closed)
+    assert watcher.state.phase == WatcherPhase.LOCKED
+    assert not watcher.state.final_printed
+    # Always closed so far — door trigger must not arm.
+    assert not watcher.state.doors_seen_open
+
+    open_door = SimSnapshot(
+        connected=True, on_ground=True, ground_velocity_kt=0, main_door_open=True
+    )
+    watcher.tick(open_door)
+    assert watcher.state.doors_seen_open
+    assert not watcher.state.final_printed
+
+    # T−5 would have fired if we ignored open doors — clock still far out.
+    mono["t"] += 1
+    watcher.tick(closed)
+    assert not watcher.state.final_printed
+    mono["t"] += 2
+    watcher.tick(closed)
+    assert watcher.state.final_printed
+    assert watcher.state.phase == WatcherPhase.FINAL_PRINTED
+
+
+def test_watcher_final_t5_when_doors_always_closed(
+    app_session, sample_plan: SimBriefFlightPlan
+) -> None:
+    from dataclasses import replace
+
+    now = datetime(2026, 8, 6, 12, 0, tzinfo=UTC)
+    plan = replace(
+        sample_plan,
+        ofp_id="OFP-T5",
+        sched_out_utc=now + timedelta(minutes=4),
+    )
+
+    class FakeClient:
+        def fetch_latest(self, user: str) -> SimBriefFlightPlan:
+            return plan
+
+    app_session.settings.set_simbrief_enabled(True)
+    app_session.settings.set_simbrief_user("pilot")
+    watcher = SimBriefWatcher(
+        settings=app_session.settings,
+        print_manager=app_session.print_manager,
+        sterile=app_session.sterile,
+        client=FakeClient(),  # type: ignore[arg-type]
+        config=WatcherConfig(taxi_roll_seconds=60.0),
+        _now_fn=lambda: 0.0,
+        _clock_fn=lambda _s: now,
+    )
+
+    closed = SimSnapshot(
+        connected=True, on_ground=True, ground_velocity_kt=0, main_door_open=False
+    )
+    watcher.tick(closed)
+    assert watcher.state.phase == WatcherPhase.LOCKED
+    watcher.tick(closed)
+    assert watcher.state.phase == WatcherPhase.FINAL_PRINTED
+    assert watcher.state.final_printed
+    assert not watcher.state.doors_seen_open
 
 
 def test_print_ticket_no_acars_wrapper(app_session, sample_plan: SimBriefFlightPlan) -> None:

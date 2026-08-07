@@ -115,6 +115,11 @@ class TelemetryData(Structure):
         ("battery_master", ctypes.c_double),
         ("battery_master_1", ctypes.c_double),
         ("battery_master_2", ctypes.c_double),
+        # Door open fraction (Percent Over 100 → 0.0–1.0).
+        ("exit_open_0", ctypes.c_double),
+        ("exit_open_1", ctypes.c_double),
+        ("interactive_open_0", ctypes.c_double),
+        ("interactive_open_1", ctypes.c_double),
     ]
 
 
@@ -137,6 +142,10 @@ def copy_telemetry_from_dispatch(buffer_addr: int) -> TelemetryData:
     copied.battery_master = float(src.battery_master)
     copied.battery_master_1 = float(src.battery_master_1)
     copied.battery_master_2 = float(src.battery_master_2)
+    copied.exit_open_0 = float(src.exit_open_0)
+    copied.exit_open_1 = float(src.exit_open_1)
+    copied.interactive_open_0 = float(src.interactive_open_0)
+    copied.interactive_open_1 = float(src.interactive_open_1)
     return copied
 
 
@@ -223,6 +232,10 @@ class SimConnectSession:
             ("ELECTRICAL MASTER BATTERY", "Bool"),
             ("ELECTRICAL MASTER BATTERY:1", "Bool"),
             ("ELECTRICAL MASTER BATTERY:2", "Bool"),
+            ("EXIT OPEN:0", "Percent Over 100"),
+            ("EXIT OPEN:1", "Percent Over 100"),
+            ("INTERACTIVE POINT OPEN:0", "Percent Over 100"),
+            ("INTERACTIVE POINT OPEN:1", "Percent Over 100"),
         ]
         for name, units in defs:
             hr = self._dll.SimConnect_AddToDataDefinition(
@@ -320,6 +333,13 @@ class SimConnectSession:
             or t.battery_master_1 > 0.5
             or t.battery_master_2 > 0.5
         )
+        # Percent Over 100: 0.0 closed → 1.0 fully open.
+        door_open = (
+            t.exit_open_0 > 0.15
+            or t.exit_open_1 > 0.15
+            or t.interactive_open_0 > 0.15
+            or t.interactive_open_1 > 0.15
+        )
         return SimSnapshot(
             connected=True,
             on_ground=bool(t.on_ground > 0.5),
@@ -330,6 +350,7 @@ class SimConnectSession:
             zulu_day=int(t.zulu_day) if t.zulu_day else None,
             zulu_seconds=float(t.zulu_seconds) if t.zulu_seconds is not None else None,
             battery_on=battery_on,
+            main_door_open=door_open,
         )
 
 

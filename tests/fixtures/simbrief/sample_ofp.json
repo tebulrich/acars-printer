@@ -10,7 +10,10 @@
     "flight_number": "4MC",
     "route": "CINDY8S CINDY Z10 DONEN UL603 RASCA",
     "route_distance": "312",
-    "initial_altitude": "35000"
+    "initial_altitude": "35000",
+    "costindex": "30",
+    "avg_wind_comp": "-12",
+    "avg_temp_dev": "+2"
   },
   "aircraft": {
     "icaocode": "A320",
@@ -20,12 +23,14 @@
   "origin": {
     "icao_code": "EDDF",
     "iata_code": "FRA",
-    "name": "FRANKFURT"
+    "name": "FRANKFURT",
+    "plan_rwy": "25C"
   },
   "destination": {
     "icao_code": "EDDM",
     "iata_code": "MUC",
-    "name": "MUNICH"
+    "name": "MUNICH",
+    "plan_rwy": "26L"
   },
   "alternate": [
     {
@@ -44,11 +49,17 @@
   "fuel": {
     "plan_ramp": "6200",
     "taxi": "200",
-    "plan_takeoff": "6000"
+    "plan_takeoff": "6000",
+    "enroute_burn": "4500",
+    "contingency": "225",
+    "alternate": "800",
+    "reserve": "1200",
+    "plan_landing": "1500"
   },
   "weights": {
     "est_zfw": "58000",
     "est_tow": "64000",
+    "est_ldw": "59500",
     "max_zfw": "62500",
     "max_tow": "73500",
     "pax_count_actual": "150",
