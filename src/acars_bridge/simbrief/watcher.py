@@ -131,7 +131,61 @@ class SimBriefWatcher:
         self._restore()
 
     def status_text(self) -> str:
+        """Full status line (tooltips / debug). Prefer ``chip_text`` for the header."""
         return self.state.status
+
+    def chip_text(self) -> str:
+        """Short header label — phase or callsign only, no vendor jargon."""
+        if not self.settings.simbrief_enabled():
+            return "off"
+        if not self.settings.simbrief_user():
+            return "setup"
+
+        cs = (self.state.plan.callsign if self.state.plan else "").strip()
+        phase = self.state.phase
+        st = (self.state.status or "").lower()
+
+        if phase == WatcherPhase.POLLING:
+            if "error" in st:
+                return "error"
+            if st.startswith("waiting"):
+                return "waiting"
+            return "idle"
+        if phase == WatcherPhase.LOCKED:
+            return cs or "locked"
+        if phase == WatcherPhase.FINAL_PRINTED:
+            return cs or "ready"
+        if phase == WatcherPhase.AIRBORNE:
+            return cs or "airborne"
+        if phase == WatcherPhase.POST_LANDING:
+            return "landing"
+        return cs or phase.value
+
+    def status_detail(self) -> str:
+        """Tooltip body: human status + aircraft-specific notes."""
+        raw = (self.state.status or "").strip()
+        # Older builds wrote "fenix · no loadsheet" into the status string.
+        cleaned = (
+            raw.replace(" · fenix · no loadsheet", "")
+            .replace("fenix · no loadsheet · ", "")
+            .replace(" · fenix · ", " · ")
+            .replace("print now · fenix · ", "print now · ")
+            .strip(" ·")
+        )
+        lines: list[str] = []
+        if cleaned:
+            lines.append(cleaned)
+        plan = self.state.plan
+        if plan is not None:
+            route = f"{plan.origin_icao}-{plan.dest_icao}".strip("-")
+            if route and route not in cleaned:
+                lines.append(f"{plan.callsign} {route}".strip())
+            if is_fenix_aircraft(plan):
+                lines.append(
+                    "Fenix OFP: flight plan and takeoff print here; "
+                    "loadsheet stays on the aircraft EFB."
+                )
+        return "\n".join(lines) if lines else "SimBrief idle"
 
     def tick(self, snapshot: SimSnapshot | None = None, *, do_network: bool = True) -> None:
         """Advance local state. When ``do_network`` is False, skip SimBrief HTTP."""
@@ -191,8 +245,9 @@ class SimBriefWatcher:
                 self.state.final_printed = True
                 self.state.missed_final_pending = False
                 self.state.phase = WatcherPhase.FINAL_PRINTED
+                plan = self.state.plan
                 self.state.status = (
-                    f"fenix · no loadsheet · {self.state.plan.callsign}"
+                    f"locked · {plan.callsign} {plan.origin_icao}-{plan.dest_icao}"
                 )
                 self._persist()
             elif self._should_print_final(snapshot, now_utc):
@@ -341,24 +396,18 @@ class SimBriefWatcher:
             if is_fenix_aircraft(plan):
                 self.state.final_printed = True
                 self.state.phase = WatcherPhase.FINAL_PRINTED
-                self.state.status = f"print now · fenix · {plan.callsign}"
             else:
                 self.state.final_printed = False
                 self.state.phase = WatcherPhase.LOCKED
-                self.state.status = f"print now · {plan.callsign}"
+            self.state.status = f"print now · {plan.callsign}"
         else:
             self._print_bundle(self._bundle_fp_prelim(plan), label="lock")
             if is_fenix_aircraft(plan):
                 self.state.final_printed = True
                 self.state.phase = WatcherPhase.FINAL_PRINTED
-                self.state.status = (
-                    f"locked · fenix · no loadsheet · "
-                    f"{plan.callsign} {plan.origin_icao}-{plan.dest_icao}"
-                )
-            else:
-                self.state.status = (
-                    f"locked · {plan.callsign} {plan.origin_icao}-{plan.dest_icao}"
-                )
+            self.state.status = (
+                f"locked · {plan.callsign} {plan.origin_icao}-{plan.dest_icao}"
+            )
         self._persist()
 
     def _should_print_final(self, snapshot: SimSnapshot | None, now_utc: datetime) -> bool:
@@ -465,8 +514,16 @@ class SimBriefWatcher:
 
         deferred = self.sterile.run_or_defer_simbrief(job)
         if deferred:
-            self.state.status = f"queued ({label}) · sterile"
-        log.info("SimBrief print bundle %s tickets=%s deferred=%s", label, len(tickets), deferred)
+            reason = self.sterile.block_reason() or "hold"
+            self.state.status = f"queued ({label}) · {reason}"
+        log.info(
+            "SimBrief print bundle %s tickets=%s deferred=%s reason=%s blocking=%s",
+            label,
+            len(tickets),
+            deferred,
+            self.sterile.block_reason(),
+            self.sterile.is_blocking,
+        )
 
     def _update_flight_phase(self, snapshot: SimSnapshot | None, now_mono: float) -> None:
         if snapshot is None or not snapshot.connected:

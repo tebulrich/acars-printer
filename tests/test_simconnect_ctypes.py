@@ -3,15 +3,23 @@ from __future__ import annotations
 import ctypes
 
 from acars_bridge.simconnect._ctypes_client import (
+    ELECTRICAL_SIMVARS,
     SIMCONNECT_RECV_SIMOBJECT_DATA,
     TelemetryData,
     copy_telemetry_from_dispatch,
+    electrical_sample,
     simobject_data_offset,
 )
 
 
 def test_simobject_payload_offset_matches_header_size():
     assert simobject_data_offset() == ctypes.sizeof(SIMCONNECT_RECV_SIMOBJECT_DATA)
+
+
+def test_telemetry_field_count_matches_electrical_simvars():
+    # 14 core/door/battery-switch fields + electrical block.
+    assert len(TelemetryData._fields_) == 14 + len(ELECTRICAL_SIMVARS)
+    assert ctypes.sizeof(TelemetryData) == len(TelemetryData._fields_) * 8
 
 
 def test_copy_telemetry_from_dispatch_reads_after_header():
@@ -35,6 +43,10 @@ def test_copy_telemetry_from_dispatch_reads_after_header():
     payload.exit_open_1 = 0.0
     payload.interactive_open_0 = 0.8
     payload.interactive_open_1 = 0.0
+    payload.bus_main = 28.0
+    payload.bus_battery = 24.0
+    payload.external_power = 0.0
+    payload.apu_generator = 0.0
 
     blob = ctypes.create_string_buffer(
         ctypes.sizeof(SIMCONNECT_RECV_SIMOBJECT_DATA) + ctypes.sizeof(TelemetryData)
@@ -54,4 +66,22 @@ def test_copy_telemetry_from_dispatch_reads_after_header():
     assert copied.zulu_seconds == 3600.0
     assert copied.battery_master == 1.0
     assert copied.interactive_open_0 == 0.8
-    assert ctypes.sizeof(TelemetryData) == 14 * 8
+    assert copied.bus_main == 28.0
+    assert copied.bus_battery == 24.0
+    sample = electrical_sample(copied)
+    assert sample["ELECTRICAL MAIN BUS VOLTAGE"] == 28.0
+    assert sample["ELECTRICAL BATTERY BUS VOLTAGE"] == 24.0
+    assert "ELECTRICAL MASTER BATTERY" in sample
+
+
+def test_power_gate_starts_blocking_when_require_powered():
+    from acars_bridge.services.sterile import SterileGate
+
+    gate = SterileGate(
+        require_powered=True, flush_stagger_seconds=0, power_on_settle_seconds=0
+    )
+    assert gate.is_unpowered
+    assert gate.is_blocking
+    ran: list[str] = []
+    assert gate.run_or_defer_simbrief(lambda: ran.append("sb")) is True
+    assert ran == []

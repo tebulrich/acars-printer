@@ -166,7 +166,7 @@ def test_sterile_defers_and_flushes() -> None:
 
 
 def test_power_gate_defers_until_battery_on() -> None:
-    gate = SterileGate(require_powered=True, flush_stagger_seconds=0)
+    gate = SterileGate(require_powered=True, flush_stagger_seconds=0, power_on_settle_seconds=0)
     ran: list[str] = []
     gate.update_from_snapshot(
         SimSnapshot(
@@ -175,17 +175,21 @@ def test_power_gate_defers_until_battery_on() -> None:
             ground_velocity_kt=0,
             alt_agl_ft=0,
             battery_on=False,
+            main_bus_voltage=0.0,
+            external_power_on=False,
         )
     )
     assert gate.is_unpowered
     assert gate.is_blocking
     assert gate.run_or_defer_acars(lambda: ran.append("acars")) is True
     assert ran == []
-    # Disconnected must not hold forever.
+    # Disconnected still holds when Only-when-powered is on (no false flush).
     gate.update_from_snapshot(None)
-    assert not gate.is_blocking
-    assert ran == ["acars"]
+    assert gate.is_blocking
+    assert ran == []
 
+    # Fresh gate for SimBrief path (prior ACARS job still queued above).
+    gate = SterileGate(require_powered=True, flush_stagger_seconds=0, power_on_settle_seconds=0)
     ran.clear()
     gate.update_from_snapshot(
         SimSnapshot(
@@ -194,18 +198,105 @@ def test_power_gate_defers_until_battery_on() -> None:
             ground_velocity_kt=0,
             alt_agl_ft=0,
             battery_on=False,
+            main_bus_voltage=0.0,
+            external_power_on=False,
         )
     )
     assert gate.run_or_defer_simbrief(lambda: ran.append("sb")) is True
+    # GPU plugged in but not ON — still cold.
     gate.update_from_snapshot(
         SimSnapshot(
             connected=True,
             on_ground=True,
             ground_velocity_kt=0,
             alt_agl_ft=0,
-            battery_on=True,
+            battery_on=False,
+            main_bus_voltage=0.0,
+            external_power_on=False,
         )
     )
+    assert gate.is_blocking
+    assert ran == []
+    # External power selected → live bus.
+    gate.update_from_snapshot(
+        SimSnapshot(
+            connected=True,
+            on_ground=True,
+            ground_velocity_kt=0,
+            alt_agl_ft=0,
+            battery_on=False,
+            main_bus_voltage=28.0,
+            external_power_on=True,
+        )
+    )
+    assert ran == ["sb"]
+
+
+def test_power_gate_blocks_before_telemetry() -> None:
+    gate = SterileGate(require_powered=True, flush_stagger_seconds=0, power_on_settle_seconds=0)
+    gate.update_from_snapshot(SimSnapshot(connected=True))  # no bus sample yet
+    assert gate.is_unpowered
+    assert gate.is_blocking
+
+
+def test_power_gate_settles_10s_after_power_on() -> None:
+    """Queued prints wait POWER_ON_SETTLE_SECONDS after electrical power-up."""
+    clock = {"t": 100.0}
+
+    def now() -> float:
+        return clock["t"]
+
+    gate = SterileGate(
+        require_powered=True,
+        flush_stagger_seconds=0,
+        power_on_settle_seconds=10.0,
+        _now_fn=now,
+    )
+    ran: list[str] = []
+    cold = SimSnapshot(
+        connected=True,
+        on_ground=True,
+        ground_velocity_kt=0,
+        alt_agl_ft=0,
+        battery_on=False,
+        main_bus_voltage=0.0,
+        external_power_on=False,
+        electrical={
+            "ELECTRICAL MAIN BUS VOLTAGE": 0.0,
+            "CIRCUIT GENERAL PANEL ON": 0.0,
+            "NEW ELECTRICAL SYSTEM": 0.0,
+        },
+    )
+    live = SimSnapshot(
+        connected=True,
+        on_ground=True,
+        ground_velocity_kt=0,
+        alt_agl_ft=0,
+        battery_on=False,
+        main_bus_voltage=28.0,
+        external_power_on=True,
+        electrical={
+            "ELECTRICAL MAIN BUS VOLTAGE": 28.0,
+            "CIRCUIT GENERAL PANEL ON": 1.0,
+            "EXTERNAL POWER ON": 1.0,
+            "NEW ELECTRICAL SYSTEM": 0.0,
+        },
+    )
+    gate.update_from_snapshot(cold)
+    assert gate.run_or_defer_simbrief(lambda: ran.append("sb")) is True
+    gate.update_from_snapshot(live)
+    assert not gate.is_unpowered
+    assert gate.is_settling
+    assert gate.is_blocking
+    assert ran == []
+    clock["t"] = 109.0
+    gate.update_from_snapshot(live)
+    assert gate.is_settling
+    assert ran == []
+    clock["t"] = 110.0
+    gate.update_from_snapshot(live)
+    assert not gate.is_settling
+    assert not gate.is_blocking
     assert ran == ["sb"]
 
 
@@ -218,12 +309,217 @@ def test_power_gate_off_ignores_battery() -> None:
             ground_velocity_kt=0,
             alt_agl_ft=0,
             battery_on=False,
+            main_bus_voltage=0.0,
         )
     )
     assert not gate.is_blocking
     ran: list[str] = []
     assert gate.run_or_defer_acars(lambda: ran.append("ok")) is False
     assert ran == ["ok"]
+
+
+def test_power_gate_ignores_lying_battery_when_bus_dark() -> None:
+    """Battery-switch simvars can lie ON; bus/circuit signals decide power."""
+    gate = SterileGate(require_powered=True, flush_stagger_seconds=0, power_on_settle_seconds=0)
+    gate.update_from_snapshot(
+        SimSnapshot(
+            connected=True,
+            on_ground=True,
+            ground_velocity_kt=0,
+            alt_agl_ft=0,
+            battery_on=True,
+            main_bus_voltage=0.0,
+            external_power_on=False,
+            electrical={
+                "ELECTRICAL MAIN BUS VOLTAGE": 0.0,
+                "CIRCUIT GENERAL PANEL ON": 0.0,
+                "ELECTRICAL MASTER BATTERY": 1.0,
+            },
+        )
+    )
+    assert gate.is_unpowered
+    assert gate.is_blocking
+
+
+def test_power_gate_battery_alone_does_not_unblock() -> None:
+    """Regression: battery_on=True with no bus sample must NOT release the gate."""
+    gate = SterileGate(require_powered=True, flush_stagger_seconds=0, power_on_settle_seconds=0)
+    ran: list[str] = []
+    assert gate.run_or_defer_simbrief(lambda: ran.append("sb")) is True
+    gate.update_from_snapshot(
+        SimSnapshot(
+            connected=True,
+            on_ground=True,
+            ground_velocity_kt=0,
+            alt_agl_ft=0,
+            battery_on=True,
+            main_bus_voltage=None,
+            external_power_on=None,
+            electrical=None,
+        )
+    )
+    assert gate.is_blocking
+    assert ran == []
+
+
+def test_power_gate_panel_or_ext_unblocks() -> None:
+    """Powered = EXT / APU / panel / avionics bus — not battery or lying main bus."""
+    gate = SterileGate(require_powered=True, flush_stagger_seconds=0, power_on_settle_seconds=0)
+    ran: list[str] = []
+    gate.update_from_snapshot(
+        SimSnapshot(
+            connected=True,
+            on_ground=True,
+            ground_velocity_kt=0,
+            alt_agl_ft=0,
+            battery_on=False,
+            main_bus_voltage=0.0,
+            external_power_on=False,
+            apu_generator_on=False,
+            electrical={
+                "ELECTRICAL MAIN BUS VOLTAGE": 0.0,
+                "CIRCUIT GENERAL PANEL ON": 0.0,
+                "NEW ELECTRICAL SYSTEM": 0.0,
+            },
+        )
+    )
+    assert gate.run_or_defer_simbrief(lambda: ran.append("sb")) is True
+    gate.update_from_snapshot(
+        SimSnapshot(
+            connected=True,
+            on_ground=True,
+            ground_velocity_kt=0,
+            alt_agl_ft=0,
+            battery_on=False,
+            main_bus_voltage=28.0,
+            external_power_on=False,
+            apu_generator_on=True,
+            electrical={
+                "ELECTRICAL MAIN BUS VOLTAGE": 28.0,
+                "CIRCUIT GENERAL PANEL ON": 1.0,
+                "APU GENERATOR SWITCH": 1.0,
+                "NEW ELECTRICAL SYSTEM": 0.0,
+            },
+        )
+    )
+    assert not gate.is_unpowered
+    assert ran == ["sb"]
+
+
+def test_power_gate_fenix_lying_main_bus_stays_blocked() -> None:
+    """Fenix-class: MAIN BUS + CIRCUIT AVIONICS ON while panel/avionics dark = cold."""
+    from acars_bridge.simconnect.monitor import aircraft_is_powered
+
+    snap = SimSnapshot(
+        connected=True,
+        on_ground=True,
+        ground_velocity_kt=0,
+        alt_agl_ft=0,
+        battery_on=True,
+        main_bus_voltage=28.0,
+        external_power_on=False,
+        apu_generator_on=False,
+        electrical={
+            "ELECTRICAL MASTER BATTERY": 1.0,
+            "ELECTRICAL MAIN BUS VOLTAGE": 28.0,
+            "ELECTRICAL AVIONICS BUS VOLTAGE": 0.0,
+            "ELECTRICAL BATTERY BUS VOLTAGE": 28.0,
+            "ELECTRICAL GENALT BUS VOLTAGE": 5.0,
+            "ELECTRICAL BUS VOLTAGE:1": 0.0,
+            "EXTERNAL POWER ON": 0.0,
+            "EXTERNAL POWER AVAILABLE": 1.0,
+            # GPU plugged — must NOT unlock (Fenix keeps this after EXT deselect).
+            "EXTERNAL POWER CONNECTION ON": 1.0,
+            "EXTERNAL POWER CONNECTION ON:1": 1.0,
+            "APU GENERATOR SWITCH": 0.0,
+            "CIRCUIT GENERAL PANEL ON": 0.0,
+            "CIRCUIT AVIONICS ON": 1.0,
+            "NEW ELECTRICAL SYSTEM": 1.0,
+            "L:I_OH_ELEC_EXT_PWR_L": 0.0,
+            "L:I_OH_ELEC_EXT_PWR_U": 1.0,  # AVAIL only — not feeding yet
+            "L:B_ELEC_BUS_POWER_AC1": 0.0,
+            "L:B_ELEC_BUS_POWER_AC2": 0.0,
+            "L:B_ELEC_BUS_POWER_AC_ESS": 0.0,
+            "L:B_ELEC_BUS_POWER_DC_ESS": 0.0,  # batteries off = cold
+        },
+    )
+    assert aircraft_is_powered(snap) is False
+    gate = SterileGate(require_powered=True, flush_stagger_seconds=0, power_on_settle_seconds=0)
+    gate.update_from_snapshot(snap)
+    assert gate.is_unpowered
+    assert gate.is_blocking
+
+
+def test_power_gate_fenix_batteries_on_dc_ess_unblocks() -> None:
+    """Fenix: DC ESS live means batteries are feeding — unlock prints."""
+    from acars_bridge.simconnect.monitor import aircraft_is_powered
+
+    snap = SimSnapshot(
+        connected=True,
+        on_ground=True,
+        ground_velocity_kt=0,
+        alt_agl_ft=0,
+        battery_on=True,
+        main_bus_voltage=28.0,
+        external_power_on=False,
+        apu_generator_on=False,
+        electrical={
+            "ELECTRICAL MAIN BUS VOLTAGE": 28.0,
+            "EXTERNAL POWER ON": 0.0,
+            "EXTERNAL POWER CONNECTION ON": 1.0,
+            "CIRCUIT AVIONICS ON": 1.0,
+            "NEW ELECTRICAL SYSTEM": 1.0,
+            "L:I_OH_ELEC_EXT_PWR_L": 0.0,
+            "L:I_OH_ELEC_EXT_PWR_U": 1.0,
+            "L:B_ELEC_BUS_POWER_AC1": 0.0,
+            "L:B_ELEC_BUS_POWER_AC2": 0.0,
+            "L:B_ELEC_BUS_POWER_DC_ESS": 1.0,
+        },
+    )
+    assert aircraft_is_powered(snap) is True
+    gate = SterileGate(require_powered=True, flush_stagger_seconds=0, power_on_settle_seconds=0)
+    ran: list[str] = []
+    assert gate.run_or_defer_simbrief(lambda: ran.append("sb")) is True
+    gate.update_from_snapshot(snap)
+    assert not gate.is_unpowered
+    assert ran == ["sb"]
+
+
+def test_power_gate_fenix_external_power_unblocks() -> None:
+    from acars_bridge.simconnect.monitor import aircraft_is_powered
+
+    snap = SimSnapshot(
+        connected=True,
+        on_ground=True,
+        ground_velocity_kt=0,
+        alt_agl_ft=0,
+        battery_on=True,
+        main_bus_voltage=28.0,
+        # Snapshot flag follows Fenix EXT green light in the live client.
+        external_power_on=True,
+        apu_generator_on=False,
+        electrical={
+            "ELECTRICAL MAIN BUS VOLTAGE": 28.0,
+            "ELECTRICAL AVIONICS BUS VOLTAGE": 0.0,
+            "EXTERNAL POWER ON": 0.0,
+            "EXTERNAL POWER CONNECTION ON": 1.0,
+            "CIRCUIT GENERAL PANEL ON": 0.0,
+            "CIRCUIT AVIONICS ON": 1.0,
+            "NEW ELECTRICAL SYSTEM": 1.0,
+            # Fenix green EXT PWR light — stock EXTERNAL POWER ON stays 0.
+            "L:I_OH_ELEC_EXT_PWR_L": 1.0,
+            "L:B_ELEC_BUS_POWER_AC1": 0.0,
+            "L:B_ELEC_BUS_POWER_AC2": 0.0,
+            "L:B_ELEC_BUS_POWER_AC_ESS": 1.0,
+        },
+    )
+    assert aircraft_is_powered(snap) is True
+    gate = SterileGate(require_powered=True, flush_stagger_seconds=0, power_on_settle_seconds=0)
+    ran: list[str] = []
+    assert gate.run_or_defer_simbrief(lambda: ran.append("sb")) is True
+    gate.update_from_snapshot(snap)
+    assert not gate.is_unpowered
+    assert ran == ["sb"]
 
 
 def test_acars_ingestion_defers_when_sterile(app_session) -> None:

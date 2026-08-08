@@ -86,7 +86,8 @@ class AcarsBridgeApp(QMainWindow):
         # Detail pane: hidden while auto-print is on until the user opens a message.
         self._detail_opened = False
 
-        # Keep recent traffic across restarts so strips can be reprinted.
+        # Messages list is session-scoped — wipe prior rows on each launch.
+        self.session.messages.clear_all()
         self._bridge = _TapBridge(self)
         self._bridge.updated.connect(self._apply_tap_update)
         self._bridge.new_messages.connect(self._on_new_messages)
@@ -186,12 +187,14 @@ class AcarsBridgeApp(QMainWindow):
 
         self.callsign_chip = self._chip("FLT —")
         self.link_chip = self._chip("LINK off")
+        self.power_chip = self._chip("PWR —")
         self.sterile_chip = self._chip("STERILE off")
         self.simbrief_chip = self._chip("OFP —")
         self.clock_chip = self._chip("UTC —")
         for chip in (
             self.callsign_chip,
             self.link_chip,
+            self.power_chip,
             self.sterile_chip,
             self.simbrief_chip,
             self.clock_chip,
@@ -273,9 +276,6 @@ class AcarsBridgeApp(QMainWindow):
         layout = QVBoxLayout(self.tab_messages)
         layout.setContentsMargins(10, 10, 10, 10)
         head = QHBoxLayout()
-        title = QLabel("Traffic")
-        title.setObjectName("Title")
-        head.addWidget(title)
         head.addStretch(1)
         self.btn_refresh = QPushButton("Refresh")
         self.btn_refresh.setToolTip("Reload message list and bridge status")
@@ -315,7 +315,7 @@ class AcarsBridgeApp(QMainWindow):
         title_row.addWidget(self.btn_hide_detail)
         layout.addLayout(title_row)
 
-        self.detail_meta = QLabel("New traffic from your aircraft client appears here and prints.")
+        self.detail_meta = QLabel("New messages from your aircraft appear here and print.")
         self.detail_meta.setObjectName("Muted")
         self.detail_meta.setWordWrap(True)
         layout.addWidget(self.detail_meta)
@@ -628,8 +628,10 @@ class AcarsBridgeApp(QMainWindow):
             "on" if self.session.settings.print_when_powered() else "off"
         )
         print_when_powered.setToolTip(
-            "When on, queue ACARS/SimBrief prints until SimConnect sees a battery "
-            "master switch ON. If MSFS is not connected, prints are not held."
+            "When on, queue ACARS/SimBrief prints until the main electrical bus is "
+            "live (battery, external power, or APU/engine generators). GPU plugged "
+            "in but not selected does not count. Needs SimConnect — holds while "
+            "disconnected."
         )
 
         simbrief_user = QLineEdit(self.session.settings.simbrief_user() or "")
@@ -719,7 +721,8 @@ class AcarsBridgeApp(QMainWindow):
             "Callsign filter limits which flight prints; registration appears on the strip header. "
             "SimBrief auto-prints flight plan + loadsheets; printing is muted during takeoff/landing "
             "up to your Sterile until altitude (queued strips print after). "
-            "Only when powered queues prints until a battery is on. "
+            "Only when powered queues prints until the main electrical bus is live "
+            "(any normal power source — not airframe-specific). "
             "Printer layout is on the Format tab."
         )
         help_lbl.setObjectName("Muted")
@@ -869,7 +872,7 @@ class AcarsBridgeApp(QMainWindow):
                     "3) Keep flying — no plane restart needed"
                 )
             else:
-                empty = "Connected — waiting for plane traffic (CPDLC, telex, weather…)."
+                empty = "Connected — waiting for messages (CPDLC, telex, weather…)."
             item = QListWidgetItem(empty)
             item.setFlags(Qt.ItemFlag.NoItemFlags)
             self.message_list.addItem(item)
@@ -969,7 +972,7 @@ class AcarsBridgeApp(QMainWindow):
     def _reset_detail_placeholder(self) -> None:
         self.detail_title.setText("Select a message")
         self.detail_meta.setText(
-            "Traffic prints automatically when auto-print is on. "
+            "Messages print automatically when auto-print is on. "
             "Click a row to inspect it here."
         )
         self.detail_body.clear()
@@ -1116,7 +1119,7 @@ class AcarsBridgeApp(QMainWindow):
         self._flash(
             note
             if note
-            else f"Connected — watching {label} traffic from any aircraft"
+            else f"Connected — watching {label} messages from any aircraft"
         )
         self._reload_messages()
 
@@ -1174,7 +1177,7 @@ class AcarsBridgeApp(QMainWindow):
             if deferred:
                 reason = self.session.sterile.block_reason() or "held"
                 if reason == "unpowered":
-                    bits.append(f"{deferred} queued (battery off)")
+                    bits.append(f"{deferred} queued (unpowered)")
                 elif "unpowered" in reason and "sterile" in reason:
                     bits.append(f"{deferred} queued (sterile/power)")
                 else:
@@ -1226,9 +1229,9 @@ class AcarsBridgeApp(QMainWindow):
         if self.session.sterile.run_or_defer_acars(job):
             reason = self.session.sterile.block_reason()
             if reason == "unpowered":
-                self._flash("Reprint queued until battery is on.")
+                self._flash("Reprint queued until aircraft is powered.")
             elif "unpowered" in reason:
-                self._flash("Reprint queued until sterile ends / battery on.")
+                self._flash("Reprint queued until sterile ends / power on.")
             else:
                 self._flash("Reprint queued until sterile ends.")
             return
@@ -1370,22 +1373,72 @@ class AcarsBridgeApp(QMainWindow):
             was_blocking = self.session.sterile.is_blocking
             was_sterile = self.session.sterile.is_sterile
             was_unpowered = self.session.sterile.is_unpowered
+            was_powered = self.session.sterile.battery_on
             self.session.sterile.update_from_snapshot(snap)
             now_blocking = self.session.sterile.is_blocking
             now_sterile = self.session.sterile.is_sterile
             now_unpowered = self.session.sterile.is_unpowered
+            now_powered = self.session.sterile.battery_on
+            from acars_bridge.simconnect.monitor import (
+                SimSnapshot as _Snap,
+                aircraft_is_powered,
+            )
+
+            if isinstance(snap, _Snap) and snap.connected:
+                elec = dict(snap.electrical or {})
+                # Always log — even when the dict is empty — so missing SimVars are obvious.
+                self.debug.info(
+                    "electrical_buses",
+                    decision_powered=aircraft_is_powered(snap),
+                    gate_blocking=now_blocking,
+                    gate_require_powered=self.session.sterile.require_powered,
+                    snap_battery_on=snap.battery_on,
+                    snap_main_bus=snap.main_bus_voltage,
+                    snap_ext=snap.external_power_on,
+                    snap_apu=snap.apu_generator_on,
+                    **elec,
+                )
+            if was_powered != now_powered or was_unpowered != now_unpowered:
+                self.debug.info(
+                    "power_gate",
+                    was_powered=was_powered,
+                    now_powered=now_powered,
+                    blocking=now_blocking,
+                    battery_on=(
+                        snap.battery_on if isinstance(snap, _Snap) else None
+                    ),
+                    external_power_on=(
+                        snap.external_power_on if isinstance(snap, _Snap) else None
+                    ),
+                    main_bus_voltage=(
+                        snap.main_bus_voltage if isinstance(snap, _Snap) else None
+                    ),
+                    apu_generator_on=(
+                        snap.apu_generator_on if isinstance(snap, _Snap) else None
+                    ),
+                )
             if was_blocking and not now_blocking:
-                if was_unpowered and not was_sterile:
-                    self._flash("Battery on — printing queued strips")
+                # Only announce "Power on" after a confirmed cold state — not the
+                # first telemetry sample after "unknown / waiting for SimConnect".
+                if was_unpowered and was_powered is False and not was_sterile:
+                    self._flash("Power on — printing queued strips")
                 else:
                     self._flash("Hold ended — printing queued strips")
+            elif (
+                was_unpowered
+                and not now_unpowered
+                and now_blocking
+                and self.session.sterile.is_settling
+            ):
+                self._flash("Power on — printing in 10 seconds")
             elif not was_sterile and now_sterile:
                 self._flash(
                     f"Sterile until {int(self.session.sterile.thresholds.agl_ft)} ft AGL"
                 )
-            elif not was_unpowered and now_unpowered:
-                self._flash("Battery off — prints queued")
+            elif not was_unpowered and now_unpowered and now_powered is False:
+                self._flash("Aircraft unpowered — prints queued")
             self._last_sterile = now_sterile
+            self._update_power_chip(snap)
             self._update_sterile_chip(snap)
             if snap is not None and getattr(snap, "detail", None):
                 # Low-churn breadcrumb for Debug log (once per distinct detail).
@@ -1403,11 +1456,7 @@ class AcarsBridgeApp(QMainWindow):
                 self._simbrief_pool.submit(self._simbrief_poll_worker)
         except Exception as exc:  # noqa: BLE001
             self.debug.info("simbrief_tick_error", error=str(exc))
-        text = watcher.status_text() or "-"
-        if len(text) > 18:
-            text = text[:15] + "..."
-        self.simbrief_chip.setText(f"OFP {text}")
-        self.simbrief_chip.setToolTip(watcher.status_text())
+        self._apply_ofp_chip(watcher)
 
     def _simbrief_poll_worker(self) -> None:
         try:
@@ -1419,34 +1468,94 @@ class AcarsBridgeApp(QMainWindow):
             self._simbrief_poll_busy = False
             QTimer.singleShot(0, self._refresh_ofp_chip)
 
+    def _apply_ofp_chip(self, watcher: object) -> None:
+        self.simbrief_chip.setText(f"OFP {watcher.chip_text()}")  # type: ignore[attr-defined]
+        self.simbrief_chip.setToolTip(watcher.status_detail())  # type: ignore[attr-defined]
+
     def _refresh_ofp_chip(self) -> None:
         if self._closing:
             return
         watcher = self.session.ensure_simbrief_watcher()
-        text = watcher.status_text() or "-"
-        if len(text) > 18:
-            text = text[:15] + "..."
-        self.simbrief_chip.setText(f"OFP {text}")
-        self.simbrief_chip.setToolTip(watcher.status_text())
+        self._apply_ofp_chip(watcher)
         self._reload_messages()
+
+    def _update_power_chip(self, snap: object | None) -> None:
+        from acars_bridge.simconnect.monitor import SimSnapshot, aircraft_is_powered
+
+        acars_n, sb_n = self.session.sterile.queue_sizes()
+        queued = acars_n + sb_n if self.session.sterile.require_powered else 0
+        connected = isinstance(snap, SimSnapshot) and snap.connected
+        if not connected:
+            detail = ""
+            if isinstance(snap, SimSnapshot) and snap.detail:
+                detail = f" ({snap.detail})"
+            self.power_chip.setText("PWR —")
+            self.power_chip.setStyleSheet(self._chip_color_style(COLORS["muted"]))
+            self.power_chip.setToolTip(
+                "Aircraft power unknown — SimConnect not connected" + detail
+            )
+            return
+
+        powered = aircraft_is_powered(snap) if isinstance(snap, SimSnapshot) else None
+        bus = getattr(snap, "main_bus_voltage", None) if isinstance(snap, SimSnapshot) else None
+        ext = getattr(snap, "external_power_on", None) if isinstance(snap, SimSnapshot) else None
+        bus_txt = f"{bus:.0f} V" if isinstance(bus, (int, float)) else "—"
+        ext_txt = "on" if ext is True else "off" if ext is False else "—"
+
+        if powered is True:
+            label = "PWR on"
+            if queued:
+                label = f"PWR on · q{queued}"
+            self.power_chip.setText(label)
+            self.power_chip.setStyleSheet(self._chip_color_style(COLORS["ok"]))
+            tip = (
+                f"Aircraft powered (EXT {ext_txt}, main bus {bus_txt}). "
+                "Fenix: batteries (DC ESS), EXT PWR, or APU gen."
+            )
+            if self.session.sterile.require_powered:
+                tip += " Only-when-powered: prints allowed."
+            self.power_chip.setToolTip(tip)
+        elif powered is False:
+            label = "PWR off"
+            if queued:
+                label = f"PWR off · q{queued}"
+            self.power_chip.setText(label)
+            self.power_chip.setStyleSheet(self._chip_color_style(COLORS["warn"]))
+            tip = (
+                f"Aircraft unpowered (EXT {ext_txt}, main bus {bus_txt}). "
+                "Turn on batteries, EXT PWR, or APU gen."
+            )
+            if self.session.sterile.require_powered:
+                tip += (
+                    f" Only-when-powered: prints queued "
+                    f"(ACARS {acars_n}, SimBrief {sb_n})."
+                )
+            self.power_chip.setToolTip(tip)
+        else:
+            self.power_chip.setText("PWR …")
+            self.power_chip.setStyleSheet(self._chip_color_style(COLORS["accent"]))
+            self.power_chip.setToolTip(
+                "Waiting for first electrical sample from SimConnect."
+            )
 
     def _update_sterile_chip(self, snap: object | None) -> None:
         from acars_bridge.simconnect.monitor import SimSnapshot
 
         sterile = self.session.sterile.is_sterile
-        unpowered = self.session.sterile.is_unpowered
         connected = isinstance(snap, SimSnapshot) and snap.connected
         acars_n, sb_n = self.session.sterile.queue_sizes()
-        queued = acars_n + sb_n
+        # Queue count for sterile-only hold (power queue is on the PWR chip).
+        queued = acars_n + sb_n if sterile else 0
         if not connected:
             detail = ""
             if isinstance(snap, SimSnapshot) and snap.detail:
                 detail = f" ({snap.detail})"
             self.sterile_chip.setText("STERILE —")
+            self.sterile_chip.setStyleSheet(self._chip_color_style(COLORS["muted"]))
             self.sterile_chip.setToolTip(
                 "MSFS not connected via SimConnect"
                 + detail
-                + ". Start the sim (main menu is enough). ACARS still prints."
+                + ". Start the sim (main menu is enough)."
             )
             return
         if sterile:
@@ -1454,30 +1563,15 @@ class AcarsBridgeApp(QMainWindow):
             if queued:
                 label = f"STERILE q{queued}"
             self.sterile_chip.setText(label)
-            tip = (
+            self.sterile_chip.setStyleSheet(self._chip_color_style(COLORS["warn"]))
+            self.sterile_chip.setToolTip(
                 f"Printing muted below {int(self.session.sterile.thresholds.agl_ft)} ft AGL "
                 f"or ≥40 kt on ground. Queued: ACARS {acars_n}, SimBrief {sb_n}."
             )
-            if unpowered:
-                tip += " Battery also off."
-            self.sterile_chip.setToolTip(tip)
-        elif unpowered:
-            label = "PWR wait"
-            if queued:
-                label = f"PWR q{queued}"
-            self.sterile_chip.setText(label)
-            self.sterile_chip.setToolTip(
-                "Only when powered is on — waiting for a battery master switch. "
-                f"Queued: ACARS {acars_n}, SimBrief {sb_n}."
-            )
         else:
-            bat = ""
-            if isinstance(snap, SimSnapshot) and snap.battery_on is not None:
-                bat = " Battery on." if snap.battery_on else " Battery off."
             self.sterile_chip.setText("STERILE off")
-            self.sterile_chip.setToolTip(
-                "Printer live — not in sterile window." + bat
-            )
+            self.sterile_chip.setStyleSheet(self._chip_color_style(COLORS["ok"]))
+            self.sterile_chip.setToolTip("Not in sterile window — sterile gate open.")
 
     def _simbrief_print_now(self) -> None:
         snap = self.session.simconnect.snapshot()

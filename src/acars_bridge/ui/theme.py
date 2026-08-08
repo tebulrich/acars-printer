@@ -65,6 +65,10 @@ def app_stylesheet() -> str:
     QFrame#SettingsFooter {{
         border-top: 1px solid {c["border"]};
     }}
+    /* Labels must not paint a solid block — global QWidget bg would show as chips. */
+    QLabel {{
+        background-color: transparent;
+    }}
     QLabel#Chip {{
         background-color: {c["panel_alt"]};
         border: 1px solid {c["border"]};
@@ -76,16 +80,17 @@ def app_stylesheet() -> str:
         font-size: 16px;
         font-weight: 700;
         color: {c["text"]};
-        background: transparent;
+        background-color: transparent;
     }}
     QLabel#BrandMark {{
-        background: transparent;
+        background-color: transparent;
         border: none;
         padding: 0;
     }}
     QLabel#Subtitle, QLabel#Muted, QLabel#Toast {{
         color: {c["muted"]};
         font-size: 13px;
+        background-color: transparent;
     }}
     QLabel#Toast[error="true"] {{
         color: {c["danger"]};
@@ -96,6 +101,7 @@ def app_stylesheet() -> str:
     QLabel#Title {{
         font-size: 16px;
         font-weight: 700;
+        background-color: transparent;
     }}
     QLabel#Section {{
         font-size: 12px;
@@ -103,6 +109,7 @@ def app_stylesheet() -> str:
         letter-spacing: 0.06em;
         color: {c["muted"]};
         padding: 0 0 2px 0;
+        background-color: transparent;
     }}
     QPushButton {{
         background-color: {c["panel_alt"]};

@@ -475,7 +475,7 @@ class SettingsStore:
         return cls._STERILE_AGL_CHOICES
 
     def print_when_powered(self) -> bool:
-        """When on, queue prints until SimConnect reports a battery master ON."""
+        """When on, queue prints until SimConnect reports aircraft electrical power."""
         return (self.get("print_when_powered", "0") or "0") in {
             "1",
             "true",

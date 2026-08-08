@@ -111,16 +111,89 @@ class TelemetryData(Structure):
         ("zulu_month", ctypes.c_double),
         ("zulu_day", ctypes.c_double),
         ("zulu_seconds", ctypes.c_double),
-        # Master battery switches — any ON counts as "a battery is on".
         ("battery_master", ctypes.c_double),
         ("battery_master_1", ctypes.c_double),
         ("battery_master_2", ctypes.c_double),
-        # Door open fraction (Percent Over 100 → 0.0–1.0).
         ("exit_open_0", ctypes.c_double),
         ("exit_open_1", ctypes.c_double),
         ("interactive_open_0", ctypes.c_double),
         ("interactive_open_1", ctypes.c_double),
+        # --- electrical buses / sources (logged in full every sample) ---
+        ("bus_main", ctypes.c_double),
+        ("bus_avionics", ctypes.c_double),
+        ("bus_battery", ctypes.c_double),
+        ("bus_hot_battery", ctypes.c_double),
+        ("bus_genalt", ctypes.c_double),
+        ("bus_genalt_1", ctypes.c_double),
+        ("bus_genalt_2", ctypes.c_double),
+        ("bus_indexed_1", ctypes.c_double),
+        ("bus_indexed_2", ctypes.c_double),
+        ("bus_indexed_3", ctypes.c_double),
+        ("bus_indexed_4", ctypes.c_double),
+        ("apu_volts", ctypes.c_double),
+        ("external_power", ctypes.c_double),
+        ("external_power_1", ctypes.c_double),
+        ("external_available", ctypes.c_double),
+        ("external_available_1", ctypes.c_double),
+        ("apu_generator", ctypes.c_double),
+        ("circuit_general_panel", ctypes.c_double),
+        ("circuit_avionics", ctypes.c_double),
+        ("new_electrical_system", ctypes.c_double),
+        ("total_load_amps", ctypes.c_double),
+        ("external_connection", ctypes.c_double),
+        ("external_connection_1", ctypes.c_double),
+        ("external_power_volts", ctypes.c_double),
+        ("external_power_volts_1", ctypes.c_double),
+        # Fenix A32x — stock EXTERNAL POWER ON stays 0; use overhead / bus L-vars.
+        ("fenix_ext_pwr_l", ctypes.c_double),
+        ("fenix_ext_pwr_u", ctypes.c_double),
+        ("fenix_apu_gen_l", ctypes.c_double),
+        ("fenix_bus_ac1", ctypes.c_double),
+        ("fenix_bus_ac2", ctypes.c_double),
+        ("fenix_bus_ac_ess", ctypes.c_double),
+        ("fenix_bus_dc1", ctypes.c_double),
+        ("fenix_bus_dc2", ctypes.c_double),
+        ("fenix_bus_dc_ess", ctypes.c_double),
     ]
+
+
+# (struct field, SimConnect name, units) — keep order identical to TelemetryData electrical block.
+ELECTRICAL_SIMVARS: tuple[tuple[str, str, str], ...] = (
+    ("bus_main", "ELECTRICAL MAIN BUS VOLTAGE", "Volts"),
+    ("bus_avionics", "ELECTRICAL AVIONICS BUS VOLTAGE", "Volts"),
+    ("bus_battery", "ELECTRICAL BATTERY BUS VOLTAGE", "Volts"),
+    ("bus_hot_battery", "ELECTRICAL HOT BATTERY BUS VOLTAGE", "Volts"),
+    ("bus_genalt", "ELECTRICAL GENALT BUS VOLTAGE", "Volts"),
+    ("bus_genalt_1", "ELECTRICAL GENALT BUS VOLTAGE:1", "Volts"),
+    ("bus_genalt_2", "ELECTRICAL GENALT BUS VOLTAGE:2", "Volts"),
+    ("bus_indexed_1", "ELECTRICAL BUS VOLTAGE:1", "Volts"),
+    ("bus_indexed_2", "ELECTRICAL BUS VOLTAGE:2", "Volts"),
+    ("bus_indexed_3", "ELECTRICAL BUS VOLTAGE:3", "Volts"),
+    ("bus_indexed_4", "ELECTRICAL BUS VOLTAGE:4", "Volts"),
+    ("apu_volts", "APU VOLTS", "Volts"),
+    ("external_power", "EXTERNAL POWER ON", "Bool"),
+    ("external_power_1", "EXTERNAL POWER ON:1", "Bool"),
+    ("external_available", "EXTERNAL POWER AVAILABLE", "Bool"),
+    ("external_available_1", "EXTERNAL POWER AVAILABLE:1", "Bool"),
+    ("apu_generator", "APU GENERATOR SWITCH", "Bool"),
+    ("circuit_general_panel", "CIRCUIT GENERAL PANEL ON", "Bool"),
+    ("circuit_avionics", "CIRCUIT AVIONICS ON", "Bool"),
+    ("new_electrical_system", "NEW ELECTRICAL SYSTEM", "Bool"),
+    ("total_load_amps", "ELECTRICAL TOTAL LOAD AMPS", "Amperes"),
+    ("external_connection", "EXTERNAL POWER CONNECTION ON", "Bool"),
+    ("external_connection_1", "EXTERNAL POWER CONNECTION ON:1", "Bool"),
+    ("external_power_volts", "ELECTRICAL EXTERNAL POWER VOLTAGE", "Volts"),
+    ("external_power_volts_1", "ELECTRICAL EXTERNAL POWER VOLTAGE:1", "Volts"),
+    ("fenix_ext_pwr_l", "L:I_OH_ELEC_EXT_PWR_L", "Number"),
+    ("fenix_ext_pwr_u", "L:I_OH_ELEC_EXT_PWR_U", "Number"),
+    ("fenix_apu_gen_l", "L:I_OH_ELEC_APU_GEN_L", "Number"),
+    ("fenix_bus_ac1", "L:B_ELEC_BUS_POWER_AC1", "Number"),
+    ("fenix_bus_ac2", "L:B_ELEC_BUS_POWER_AC2", "Number"),
+    ("fenix_bus_ac_ess", "L:B_ELEC_BUS_POWER_AC_ESS", "Number"),
+    ("fenix_bus_dc1", "L:B_ELEC_BUS_POWER_DC1", "Number"),
+    ("fenix_bus_dc2", "L:B_ELEC_BUS_POWER_DC2", "Number"),
+    ("fenix_bus_dc_ess", "L:B_ELEC_BUS_POWER_DC_ESS", "Number"),
+)
 
 
 def simobject_data_offset() -> int:
@@ -130,23 +203,21 @@ def simobject_data_offset() -> int:
 def copy_telemetry_from_dispatch(buffer_addr: int) -> TelemetryData:
     """Copy telemetry out of a GetNextDispatch buffer (do not keep the pointer)."""
     src = TelemetryData.from_address(buffer_addr + simobject_data_offset())
-    # Field-by-field copy — dispatch memory is reused on the next poll.
     copied = TelemetryData()
-    copied.on_ground = float(src.on_ground)
-    copied.ground_velocity = float(src.ground_velocity)
-    copied.alt_agl = float(src.alt_agl)
-    copied.zulu_year = float(src.zulu_year)
-    copied.zulu_month = float(src.zulu_month)
-    copied.zulu_day = float(src.zulu_day)
-    copied.zulu_seconds = float(src.zulu_seconds)
-    copied.battery_master = float(src.battery_master)
-    copied.battery_master_1 = float(src.battery_master_1)
-    copied.battery_master_2 = float(src.battery_master_2)
-    copied.exit_open_0 = float(src.exit_open_0)
-    copied.exit_open_1 = float(src.exit_open_1)
-    copied.interactive_open_0 = float(src.interactive_open_0)
-    copied.interactive_open_1 = float(src.interactive_open_1)
+    ctypes.memmove(ctypes.byref(copied), ctypes.byref(src), ctypes.sizeof(TelemetryData))
     return copied
+
+
+def electrical_sample(t: TelemetryData) -> dict[str, float]:
+    """Flat map of every electrical SimVar we query (for debug logging)."""
+    out: dict[str, float] = {
+        "ELECTRICAL MASTER BATTERY": round(float(t.battery_master), 3),
+        "ELECTRICAL MASTER BATTERY:1": round(float(t.battery_master_1), 3),
+        "ELECTRICAL MASTER BATTERY:2": round(float(t.battery_master_2), 3),
+    }
+    for field, simvar, _units in ELECTRICAL_SIMVARS:
+        out[simvar] = round(float(getattr(t, field)), 3)
+    return out
 
 
 def _c_str(value: str) -> bytes:
@@ -237,6 +308,7 @@ class SimConnectSession:
             ("INTERACTIVE POINT OPEN:0", "Percent Over 100"),
             ("INTERACTIVE POINT OPEN:1", "Percent Over 100"),
         ]
+        defs.extend((name, units) for _field, name, units in ELECTRICAL_SIMVARS)
         for name, units in defs:
             hr = self._dll.SimConnect_AddToDataDefinition(
                 self._hsim,
@@ -333,7 +405,18 @@ class SimConnectSession:
             or t.battery_master_1 > 0.5
             or t.battery_master_2 > 0.5
         )
-        # Percent Over 100: 0.0 closed → 1.0 fully open.
+        # Do NOT use EXTERNAL POWER CONNECTION ON — on Fenix that stays 1 whenever
+        # a GPU is plugged at the gate, even with EXT PWR deselected / cold.
+        external_power_on = (
+            t.external_power > 0.5
+            or t.external_power_1 > 0.5
+            or t.external_power_volts >= 18.0
+            or t.external_power_volts_1 >= 18.0
+            # Fenix: green EXT PWR pushbutton light (stock EXTERNAL POWER ON stays 0).
+            or t.fenix_ext_pwr_l > 0.5
+        )
+        apu_generator_on = t.apu_generator > 0.5 or t.fenix_apu_gen_l > 0.5
+        main_bus_voltage = float(t.bus_main)
         door_open = (
             t.exit_open_0 > 0.15
             or t.exit_open_1 > 0.15
@@ -350,7 +433,11 @@ class SimConnectSession:
             zulu_day=int(t.zulu_day) if t.zulu_day else None,
             zulu_seconds=float(t.zulu_seconds) if t.zulu_seconds is not None else None,
             battery_on=battery_on,
+            external_power_on=external_power_on,
+            apu_generator_on=apu_generator_on,
+            main_bus_voltage=main_bus_voltage,
             main_door_open=door_open,
+            electrical=electrical_sample(t),
         )
 
 

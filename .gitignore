@@ -34,3 +34,9 @@ build-new/
 dist-new/
 
 *.mdc
+
+# Leftover alternate PyInstaller output folders
+dist-release/
+dist-pwr*/
+build-pwr*/
+
