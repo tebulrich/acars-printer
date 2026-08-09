@@ -711,7 +711,7 @@ class SettingsStore:
 
     WX_AUTO_KIND_CHOICES: tuple[str, ...] = ("atis", "metar", "taf")
     _WX_AUTO_KINDS_DEFAULT = "atis,metar,taf"
-    _WX_AUTO_NM_DEFAULT = 150
+    _WX_AUTO_NM_DEFAULT = 180
 
     def wx_auto_enabled(self) -> bool:
         return (self.get("wx_auto_enabled", "0") or "0") in {"1", "true", "yes", "on"}

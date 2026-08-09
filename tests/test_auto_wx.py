@@ -252,7 +252,7 @@ def test_auto_wx_short_hop_waits_for_airborne_then_prints_once(
 def test_wx_settings_roundtrip(app_session) -> None:
     s = app_session.settings
     assert s.wx_auto_enabled() is False
-    assert s.wx_auto_nm() == 150
+    assert s.wx_auto_nm() == 180
     s.set_wx_auto_enabled(True)
     s.set_wx_auto_nm(100)
     s.set_wx_auto_kinds(["atis", "metar"])

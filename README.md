@@ -158,7 +158,7 @@ Requires a SimBrief username or numeric pilot ID. SimConnect DLLs ship under
 
 Optional (Print tab). When enabled, once per locked SimBrief OFP the app prints
 real destination weather when you are airborne inside a user-chosen NM ring of
-the destination (default 150 NM) and the sterile/power gate allows printing.
+the destination (default 180 NM) and the sterile/power gate allows printing.
 Short hops that start already inside the ring still print once after liftoff —
 not while sitting near origin on the ground.
 
