@@ -7,6 +7,7 @@ from acars_bridge.printing.base import PrinterError, PrinterSettings
 class FakeMessagePrinter:
     def __init__(self) -> None:
         self.printed: list[tuple[int, str]] = []
+        self.feed_count = 0
         self.should_fail = False
         self.failure_message = "Simulated printer failure"
 
@@ -14,6 +15,10 @@ class FakeMessagePrinter:
         if self.should_fail:
             raise PrinterError(self.failure_message)
         self.printed.append((message.id, formatted_body))
+
+    def feed(self, settings: PrinterSettings, lines: int | None = None) -> None:
+        del settings
+        self.feed_count += max(1, int(lines or 1))
 
     def name(self) -> str:
         return "fake"

@@ -1,13 +1,8 @@
 from __future__ import annotations
 
-import random
 from dataclasses import dataclass
 
 from acars_bridge.simbrief.models import SimBriefFlightPlan
-
-_PAX_WEIGHT_KG = 84.0
-_BAG_WEIGHT_PER_PAX_KG = 20.0
-_KG_TO_LBS = 2.2046226218
 
 
 @dataclass(frozen=True, slots=True)
@@ -85,14 +80,6 @@ def _parse_float(value: str) -> float:
         return 0.0
 
 
-def _is_pounds(units: str) -> bool:
-    return units.strip().lower() in {"lbs", "lb"}
-
-
-def _from_kg(kg: float, units: str) -> float:
-    return kg * _KG_TO_LBS if _is_pounds(units) else kg
-
-
 def build_preliminary_values(plan: SimBriefFlightPlan) -> LoadsheetValues:
     return LoadsheetValues(
         pax_count=_parse_int(plan.pax_count),
@@ -102,40 +89,6 @@ def build_preliminary_values(plan: SimBriefFlightPlan) -> LoadsheetValues:
     )
 
 
-def build_final_values(
-    plan: SimBriefFlightPlan,
-    *,
-    randomize: bool = False,
-    rng: random.Random | None = None,
-) -> LoadsheetValues:
-    if not randomize:
-        return build_preliminary_values(plan)
-
-    rng = rng or random.Random()
-    pax = _parse_int(plan.pax_count)
-    cargo = _parse_float(plan.cargo_weight)
-    zfw = _parse_float(plan.zfw)
-    tow = _parse_float(plan.tow)
-    takeoff_fuel = _parse_float(plan.takeoff_fuel)
-
-    pax_delta = sum(rng.randint(0, 2) - 1 for _ in range(3))
-    pax_weight = _from_kg(_PAX_WEIGHT_KG, plan.units)
-    bag_weight = _from_kg(_BAG_WEIGHT_PER_PAX_KG, plan.units)
-    cargo_delta = pax_delta * bag_weight
-    weight_delta = pax_delta * pax_weight + cargo_delta
-
-    new_pax = max(0, pax + pax_delta)
-    new_cargo = max(0.0, cargo + cargo_delta)
-    new_zfw = zfw + weight_delta
-    new_tow = new_zfw + takeoff_fuel
-
-    return LoadsheetValues(
-        pax_count=new_pax,
-        cargo_weight=new_cargo,
-        zfw=new_zfw,
-        tow=new_tow,
-        pax_delta=pax_delta,
-        cargo_delta=cargo_delta,
-        zfw_delta=new_zfw - zfw,
-        tow_delta=new_tow - tow,
-    )
+def build_final_values(plan: SimBriefFlightPlan) -> LoadsheetValues:
+    """Final loadsheet uses the same SimBrief figures as preliminary (no invented deltas)."""
+    return build_preliminary_values(plan)

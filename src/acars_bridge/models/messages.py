@@ -185,6 +185,21 @@ class MessageRepository:
             ).fetchone()
         return str(row["status"]) if row else None
 
+    def latest_successfully_printed(self) -> StoredMessage | None:
+        """Most recent message with a successful print_jobs row (any reprint)."""
+        with self._db.lock:
+            row = self._db.conn.execute(
+                """
+                SELECT m.*
+                FROM print_jobs j
+                JOIN messages m ON m.id = j.message_id
+                WHERE j.status = 'printed' AND m.id > 0
+                ORDER BY j.id DESC
+                LIMIT 1
+                """
+            ).fetchone()
+        return StoredMessage.from_row(row) if row else None
+
     def create_print_job(
         self,
         message_id: int,

@@ -10,15 +10,17 @@ from datetime import UTC, datetime
 from typing import Any
 
 from PySide6.QtCore import QObject, Qt, QTimer, Signal, Slot
-from PySide6.QtGui import QAction, QGuiApplication, QTextOption
+from PySide6.QtGui import QAction, QGuiApplication, QKeySequence, QShortcut, QTextOption
 from PySide6.QtWidgets import (
     QApplication,
+    QCheckBox,
     QComboBox,
     QDialog,
     QDialogButtonBox,
     QFormLayout,
     QFrame,
     QHBoxLayout,
+    QKeySequenceEdit,
     QLabel,
     QLineEdit,
     QListWidget,
@@ -28,7 +30,6 @@ from PySide6.QtWidgets import (
     QMessageBox,
     QPlainTextEdit,
     QPushButton,
-    QScrollArea,
     QSizePolicy,
     QSpinBox,
     QSystemTrayIcon,
@@ -48,6 +49,7 @@ from acars_bridge.printing.discovery import (
     label_for_destination,
     list_printer_choices,
 )
+from acars_bridge.services.actions import ActionError, PrinterActions
 from acars_bridge.services.debug_log import DebugLog
 from acars_bridge.services.session import AppSession, build_session
 from acars_bridge.simconnect.monitor import is_elevated
@@ -65,6 +67,10 @@ class _TapBridge(QObject):
     new_messages = Signal(int)
 
 
+def format_window_title(version: str, width: int, height: int) -> str:
+    return f"ACARS Print Bridge  {version}  ·  {width}×{height}"
+
+
 class AcarsBridgeApp(QMainWindow):
     def __init__(self, session: AppSession) -> None:
         super().__init__()
@@ -78,9 +84,9 @@ class AcarsBridgeApp(QMainWindow):
         self._format_widgets: dict[str, Any] = {}
         self._settings_widgets: dict[str, Any] = {}
 
-        self.setMinimumSize(1135, 560)
-        self.resize(1135, 600)
-        self.setWindowTitle(f"ACARS Print Bridge  {__version__}")
+        self.setFixedSize(1135, 720)
+        self.setWindowFlag(Qt.WindowType.WindowMaximizeButtonHint, False)
+        self._refresh_window_title()
         self._app_icon = make_app_icon()
         self.setWindowIcon(self._app_icon)
         # Detail pane: hidden while auto-print is on until the user opens a message.
@@ -115,7 +121,9 @@ class AcarsBridgeApp(QMainWindow):
         self._user_check_pending = False
 
         self._build_ui()
+        self._actions = PrinterActions(self.session)
         self._setup_tray()
+        self._setup_hotkeys()
         self._refresh_header()
         self._reload_messages()
         self._set_link_state("off")
@@ -257,12 +265,23 @@ class AcarsBridgeApp(QMainWindow):
         self.tabs = QTabWidget()
         self.tab_messages = QWidget()
         self.tab_format = QWidget()
+        self.tab_network = QWidget()
+        self.tab_print_sel = QWidget()
+        self.tab_hotkeys = QWidget()
         self.tab_settings = QWidget()
         self.tabs.addTab(self.tab_messages, "Messages")
         self.tabs.addTab(self.tab_format, "Format")
+        self.tabs.addTab(self.tab_network, "Network")
+        self.tabs.addTab(self.tab_print_sel, "Print")
+        self.tabs.addTab(self.tab_hotkeys, "Hotkeys")
         self.tabs.addTab(self.tab_settings, "Settings")
+        self._settings_widgets = {}
         self._build_messages_tab()
         self._build_format_tab()
+        self._create_settings_controls()
+        self._build_network_tab()
+        self._build_print_selection_tab()
+        self._build_hotkeys_tab()
         self._build_settings_tab()
         self._body_row = row
         self._tabs_stretch = 1
@@ -342,15 +361,10 @@ class AcarsBridgeApp(QMainWindow):
         outer.setContentsMargins(0, 0, 0, 0)
         outer.setSpacing(0)
 
-        scroll = QScrollArea()
-        scroll.setWidgetResizable(True)
-        scroll.setFrameShape(QFrame.Shape.NoFrame)
-        scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
-
         page = QWidget()
         page_layout = QVBoxLayout(page)
-        page_layout.setContentsMargins(16, 16, 16, 12)
-        page_layout.setSpacing(14)
+        page_layout.setContentsMargins(14, 12, 14, 10)
+        page_layout.setSpacing(10)
 
         printer = QComboBox()
         labels = [c.label for c in self._printer_choices]
@@ -483,7 +497,8 @@ class AcarsBridgeApp(QMainWindow):
         }
 
         columns = QHBoxLayout()
-        columns.setSpacing(28)
+        columns.setSpacing(16)
+        columns.setAlignment(Qt.AlignmentFlag.AlignTop)
 
         left = self._form_column("PRINTER")
         left.addRow("Printer", printer)
@@ -529,14 +544,12 @@ class AcarsBridgeApp(QMainWindow):
         help_lbl.setWordWrap(True)
         page_layout.addWidget(help_lbl)
         page_layout.addStretch(1)
-
-        scroll.setWidget(page)
-        outer.addWidget(scroll, stretch=1)
+        outer.addWidget(page, stretch=1)
 
         footer = QFrame()
         footer.setObjectName("SettingsFooter")
         footer_row = QHBoxLayout(footer)
-        footer_row.setContentsMargins(16, 10, 16, 12)
+        footer_row.setContentsMargins(14, 10, 14, 12)
         footer_row.setSpacing(10)
         test_btn = QPushButton("Save and test print")
         test_btn.setObjectName("Primary")
@@ -561,21 +574,8 @@ class AcarsBridgeApp(QMainWindow):
         footer_row.addStretch(1)
         outer.addWidget(footer)
 
-    def _build_settings_tab(self) -> None:
-        outer = QVBoxLayout(self.tab_settings)
-        outer.setContentsMargins(0, 0, 0, 0)
-        outer.setSpacing(0)
-
-        scroll = QScrollArea()
-        scroll.setWidgetResizable(True)
-        scroll.setFrameShape(QFrame.Shape.NoFrame)
-        scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
-
-        page = QWidget()
-        page_layout = QVBoxLayout(page)
-        page_layout.setContentsMargins(16, 16, 16, 12)
-        page_layout.setSpacing(14)
-
+    def _create_settings_controls(self) -> None:
+        """Build shared Settings controls once; tabs only place them."""
         network = QComboBox()
         for profile in all_profiles():
             network.addItem(profile.label, profile.id.value)
@@ -589,16 +589,65 @@ class AcarsBridgeApp(QMainWindow):
         )
 
         callsign = QLineEdit(self.session.settings.callsign() or "")
-        callsign.setPlaceholderText("")
         callsign.setToolTip("Optional — only print this flight")
 
         registration = QLineEdit(self.session.settings.aircraft_registration() or "")
-        registration.setPlaceholderText("")
         registration.setToolTip("Optional — e.g. D-AILA (shown on the print header)")
 
         auto_print = QComboBox()
         auto_print.addItems(["on", "off"])
         auto_print.setCurrentText("on" if self.session.settings.auto_print() else "off")
+
+        type_checks: dict[str, QCheckBox] = {}
+        type_labels = {
+            "cpdlc": "CPDLC",
+            "telex": "Telex",
+            "inforeq": "Info / ATIS-METAR",
+        }
+        enabled_types = self.session.settings.printable_types()
+        for key in self.session.settings.PRINTABLE_TYPE_CHOICES:
+            box = QCheckBox(type_labels.get(key, key))
+            box.setChecked(key in enabled_types)
+            type_checks[key] = box
+
+        ofp_checks: dict[str, QCheckBox] = {}
+        ofp_labels = {
+            "flight_plan": "Flight plan",
+            "takeoff_data": "Takeoff data",
+            "loadsheet_prelim": "Prelim loadsheet",
+            "loadsheet_final": "Final loadsheet",
+        }
+        enabled_ofp = self.session.settings.simbrief_ofp_tickets()
+        for key in self.session.settings.OFP_TICKET_CHOICES:
+            box = QCheckBox(ofp_labels.get(key, key))
+            box.setChecked(key in enabled_ofp)
+            ofp_checks[key] = box
+
+        hotkeys = QComboBox()
+        hotkeys.addItems(["on", "off"])
+        hotkeys.setCurrentText(
+            "on" if self.session.settings.hotkeys_enabled() else "off"
+        )
+        hotkeys.setToolTip(
+            "When on, window hotkeys below apply (click a field and press keys; "
+            "Backspace clears)."
+        )
+
+        hotkey_edits: dict[str, QKeySequenceEdit] = {}
+        hotkey_labels = {
+            "reprint_last": "Reprint last",
+            "toggle_auto_print": "Toggle auto-print",
+            "test_print": "Test print",
+            "feed": "Feed",
+        }
+        bindings = self.session.settings.hotkey_bindings()
+        for key in self.session.settings.HOTKEY_ACTIONS:
+            edit = QKeySequenceEdit()
+            seq = bindings.get(key, "")
+            if seq:
+                edit.setKeySequence(QKeySequence(seq))
+            edit.setToolTip(hotkey_labels.get(key, key))
+            hotkey_edits[key] = edit
 
         auto_connect = QComboBox()
         auto_connect.addItems(["on", "off"])
@@ -659,6 +708,11 @@ class AcarsBridgeApp(QMainWindow):
             "callsign": callsign,
             "registration": registration,
             "auto_print": auto_print,
+            "printable_types": type_checks,
+            "ofp_tickets": ofp_checks,
+            "hotkeys": hotkeys,
+            "hotkey_edits": hotkey_edits,
+            "hotkey_labels": hotkey_labels,
             "auto_connect": auto_connect,
             "check_updates": check_updates,
             "sterile_agl": sterile_agl,
@@ -668,38 +722,173 @@ class AcarsBridgeApp(QMainWindow):
             "simbrief_grace": simbrief_grace,
         }
 
+    def _settings_save_footer(
+        self, *, include_updates: bool = False
+    ) -> QFrame:
+        footer = QFrame()
+        footer.setObjectName("SettingsFooter")
+        footer_row = QHBoxLayout(footer)
+        footer_row.setContentsMargins(14, 10, 14, 12)
+        footer_row.setSpacing(10)
+        save = QPushButton("Save settings")
+        save.setObjectName("Primary")
+        save.clicked.connect(
+            lambda: self._run_action("save_settings", self._save_settings)
+        )
+        footer_row.addWidget(save)
+        if include_updates:
+            check_btn = QPushButton("Check for updates now")
+            check_btn.clicked.connect(lambda: self._updates.check(manual=True))
+            footer_row.addWidget(check_btn)
+        footer_row.addStretch(1)
+        return footer
+
+    def _build_network_tab(self) -> None:
+        outer = QVBoxLayout(self.tab_network)
+        outer.setContentsMargins(0, 0, 0, 0)
+        outer.setSpacing(0)
+        page = QWidget()
+        page_layout = QVBoxLayout(page)
+        page_layout.setContentsMargins(14, 12, 14, 10)
+        page_layout.setSpacing(10)
+        w = self._settings_widgets
+
+        form = self._form_column("ACARS NETWORK")
+        form.addRow("Network", w["network"])
+        form.addRow("Callsign filter", w["callsign"])
+        form.addRow("Aircraft registration", w["registration"])
         columns = QHBoxLayout()
-        columns.setSpacing(28)
+        columns.setAlignment(Qt.AlignmentFlag.AlignTop)
+        self._add_form_column(columns, form)
+        page_layout.addLayout(columns)
 
-        left = self._form_column("ACARS / FLIGHT")
-        left.addRow("Network", network)
-        left.addRow("Callsign filter", callsign)
-        left.addRow("Aircraft registration", registration)
+        help_lbl = QLabel(
+            "Must match the aircraft (Hoppie / SayIntentions / PMDG GFO). "
+            "Logon code stays in the plane. Callsign filter is optional."
+        )
+        help_lbl.setObjectName("Muted")
+        help_lbl.setWordWrap(True)
+        page_layout.addWidget(help_lbl)
+        page_layout.addStretch(1)
+        outer.addWidget(page, stretch=1)
+        outer.addWidget(self._settings_save_footer())
 
-        right = self._form_column("APP")
-        right.addRow("Auto-print", auto_print)
-        right.addRow("Auto-connect", auto_connect)
-        right.addRow("Check for updates", check_updates)
-        right.addRow("Sterile until", sterile_agl)
-        right.addRow("Only when powered", print_when_powered)
+    def _build_print_selection_tab(self) -> None:
+        outer = QVBoxLayout(self.tab_print_sel)
+        outer.setContentsMargins(0, 0, 0, 0)
+        outer.setSpacing(0)
+        page = QWidget()
+        page_layout = QVBoxLayout(page)
+        page_layout.setContentsMargins(14, 12, 14, 10)
+        page_layout.setSpacing(10)
+        w = self._settings_widgets
 
-        simbrief = self._form_column("SIMBRIEF")
-        simbrief.addRow("Enabled", simbrief_enabled)
-        simbrief.addRow("Username / ID", simbrief_user)
-        simbrief.addRow("Post-landing grace", simbrief_grace)
+        columns = QHBoxLayout()
+        columns.setSpacing(24)
+        columns.setAlignment(Qt.AlignmentFlag.AlignTop)
 
-        self._add_form_column(columns, left)
-        self._add_form_column(columns, right)
-        self._add_form_column(columns, simbrief)
+        acars = self._form_column("ACARS TYPES")
+        types_host = QWidget()
+        types_col = QVBoxLayout(types_host)
+        types_col.setContentsMargins(0, 0, 0, 0)
+        types_col.setSpacing(6)
+        for key in self.session.settings.PRINTABLE_TYPE_CHOICES:
+            types_col.addWidget(w["printable_types"][key])
+        types_col.addStretch(1)
+        acars.addRow(types_host)
+
+        ofp = self._form_column("SIMBRIEF OFP")
+        ofp_host = QWidget()
+        ofp_col = QVBoxLayout(ofp_host)
+        ofp_col.setContentsMargins(0, 0, 0, 0)
+        ofp_col.setSpacing(6)
+        for key in self.session.settings.OFP_TICKET_CHOICES:
+            ofp_col.addWidget(w["ofp_tickets"][key])
+        ofp_col.addStretch(1)
+        ofp.addRow(ofp_host)
+
+        self._add_form_column(columns, acars)
+        self._add_form_column(columns, ofp)
+        page_layout.addLayout(columns)
+
+        help_lbl = QLabel(
+            "Choose what may auto-print. Auto-print master switch is on Settings. "
+            "Fenix always skips loadsheets (EFB). Strip layout is on Format."
+        )
+        help_lbl.setObjectName("Muted")
+        help_lbl.setWordWrap(True)
+        page_layout.addWidget(help_lbl)
+        page_layout.addStretch(1)
+        outer.addWidget(page, stretch=1)
+        outer.addWidget(self._settings_save_footer())
+
+    def _build_hotkeys_tab(self) -> None:
+        outer = QVBoxLayout(self.tab_hotkeys)
+        outer.setContentsMargins(0, 0, 0, 0)
+        outer.setSpacing(0)
+        page = QWidget()
+        page_layout = QVBoxLayout(page)
+        page_layout.setContentsMargins(14, 12, 14, 10)
+        page_layout.setSpacing(10)
+        w = self._settings_widgets
+        labels: dict[str, str] = w["hotkey_labels"]
+
+        form = self._form_column("WINDOW HOTKEYS")
+        form.addRow("Enabled", w["hotkeys"])
+        for key in self.session.settings.HOTKEY_ACTIONS:
+            form.addRow(labels[key], w["hotkey_edits"][key])
+        columns = QHBoxLayout()
+        columns.setAlignment(Qt.AlignmentFlag.AlignTop)
+        self._add_form_column(columns, form)
+        page_layout.addLayout(columns)
+
+        help_lbl = QLabel(
+            "Click a binding field and press the shortcut. Backspace clears (unbind). "
+            "Same actions are on the tray menu. Stream Deck can send these keys."
+        )
+        help_lbl.setObjectName("Muted")
+        help_lbl.setWordWrap(True)
+        page_layout.addWidget(help_lbl)
+        page_layout.addStretch(1)
+        outer.addWidget(page, stretch=1)
+        outer.addWidget(self._settings_save_footer())
+
+    def _build_settings_tab(self) -> None:
+        outer = QVBoxLayout(self.tab_settings)
+        outer.setContentsMargins(0, 0, 0, 0)
+        outer.setSpacing(0)
+        page = QWidget()
+        page_layout = QVBoxLayout(page)
+        page_layout.setContentsMargins(14, 12, 14, 10)
+        page_layout.setSpacing(10)
+        w = self._settings_widgets
+
+        columns = QHBoxLayout()
+        columns.setSpacing(24)
+        columns.setAlignment(Qt.AlignmentFlag.AlignTop)
+
+        app_col = self._form_column("APP")
+        app_col.addRow("Auto-print", w["auto_print"])
+        app_col.addRow("Auto-connect", w["auto_connect"])
+        app_col.addRow("Check for updates", w["check_updates"])
+        app_col.addRow("Sterile until", w["sterile_agl"])
+        app_col.addRow("Only when powered", w["print_when_powered"])
+
+        sim_col = self._form_column("SIMBRIEF")
+        sim_col.addRow("Enabled", w["simbrief_enabled"])
+        sim_col.addRow("Username / ID", w["simbrief_user"])
+        sim_col.addRow("Post-landing grace", w["simbrief_grace"])
+
+        self._add_form_column(columns, app_col)
+        self._add_form_column(columns, sim_col)
         page_layout.addLayout(columns)
 
         btn_row = QHBoxLayout()
         btn_row.setSpacing(8)
         print_now = QPushButton("Print OFP now")
         print_now.setToolTip(
-            "Fetch latest SimBrief OFP and print flight plan + takeoff data + "
-            "preliminary loadsheet (simulator must be running). Final prints "
-            "automatically on door close / T-5 / taxi."
+            "Fetch latest SimBrief OFP and print enabled OFP sections "
+            "(see Print tab). Final still follows door close / T-5 / taxi."
         )
         print_now.clicked.connect(
             lambda: self._run_action("simbrief_print_now", self._simbrief_print_now)
@@ -717,63 +906,47 @@ class AcarsBridgeApp(QMainWindow):
         page_layout.addLayout(btn_row)
 
         help_lbl = QLabel(
-            "Aircraft logon / API key stays in the plane. Match Network to that setup. "
-            "Callsign filter limits which flight prints; registration appears on the strip header. "
-            "SimBrief auto-prints flight plan + loadsheets; printing is muted during takeoff/landing "
-            "up to your Sterile until altitude (queued strips print after). "
-            "Only when powered queues prints until the main electrical bus is live "
-            "(any normal power source — not airframe-specific). "
-            "Printer layout is on the Format tab."
+            "ACARS network is on Network; what prints is on Print; shortcuts on Hotkeys. "
+            "Sterile / power queue strips until clear (needs SimConnect)."
         )
         help_lbl.setObjectName("Muted")
         help_lbl.setWordWrap(True)
         page_layout.addWidget(help_lbl)
         page_layout.addStretch(1)
-
-        scroll.setWidget(page)
-        outer.addWidget(scroll, stretch=1)
-
-        footer = QFrame()
-        footer.setObjectName("SettingsFooter")
-        footer_row = QHBoxLayout(footer)
-        footer_row.setContentsMargins(16, 10, 16, 12)
-        footer_row.setSpacing(10)
-        save = QPushButton("Save settings")
-        save.setObjectName("Primary")
-        save.clicked.connect(
-            lambda: self._run_action("save_settings", self._save_settings)
-        )
-        check_btn = QPushButton("Check for updates now")
-        check_btn.clicked.connect(lambda: self._updates.check(manual=True))
-        footer_row.addWidget(save)
-        footer_row.addWidget(check_btn)
-        footer_row.addStretch(1)
-        outer.addWidget(footer)
+        outer.addWidget(page, stretch=1)
+        outer.addWidget(self._settings_save_footer(include_updates=True))
 
     def _form_column(self, section: str) -> QFormLayout:
-        """Labeled form column for two-column Settings / Format layouts."""
+        """Labeled form column for Settings / Format — top-aligned, dense."""
         host = QWidget()
-        host.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Preferred)
+        host.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Maximum)
         col = QVBoxLayout(host)
         col.setContentsMargins(0, 0, 0, 0)
-        col.setSpacing(8)
+        col.setSpacing(4)
+        col.setAlignment(Qt.AlignmentFlag.AlignTop)
         heading = QLabel(section)
         heading.setObjectName("Section")
         col.addWidget(heading)
         form = QFormLayout()
         form.setContentsMargins(0, 0, 0, 0)
-        form.setHorizontalSpacing(14)
-        form.setVerticalSpacing(8)
+        form.setHorizontalSpacing(10)
+        form.setVerticalSpacing(5)
+        form.setRowWrapPolicy(QFormLayout.RowWrapPolicy.DontWrapRows)
+        form.setLabelAlignment(
+            Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter
+        )
+        form.setFormAlignment(
+            Qt.AlignmentFlag.AlignTop | Qt.AlignmentFlag.AlignLeft
+        )
         form.setFieldGrowthPolicy(QFormLayout.FieldGrowthPolicy.ExpandingFieldsGrow)
         col.addLayout(form)
-        col.addStretch(1)
         form._column_host = host  # type: ignore[attr-defined]
         return form
 
     def _add_form_column(self, columns: QHBoxLayout, form: QFormLayout) -> None:
         host = getattr(form, "_column_host", None)
         if isinstance(host, QWidget):
-            columns.addWidget(host, stretch=1)
+            columns.addWidget(host, stretch=1, alignment=Qt.AlignmentFlag.AlignTop)
         else:
             columns.addLayout(form, stretch=1)
 
@@ -788,9 +961,30 @@ class AcarsBridgeApp(QMainWindow):
         menu = QMenu(self)
         show_action = QAction("Show window", self)
         show_action.triggered.connect(self._show_from_tray)
+        reprint_action = QAction("Reprint last", self)
+        reprint_action.triggered.connect(
+            lambda: self._run_action("reprint_last", self._action_reprint_last)
+        )
+        toggle_auto = QAction("Toggle auto-print", self)
+        toggle_auto.triggered.connect(
+            lambda: self._run_action("toggle_auto_print", self._action_toggle_auto_print)
+        )
+        test_action = QAction("Test print", self)
+        test_action.triggered.connect(
+            lambda: self._run_action("test_print", self._action_test_print)
+        )
+        feed_action = QAction("Feed", self)
+        feed_action.triggered.connect(
+            lambda: self._run_action("feed", self._action_feed)
+        )
         quit_action = QAction("Quit", self)
         quit_action.triggered.connect(self._quit_app)
         menu.addAction(show_action)
+        menu.addSeparator()
+        menu.addAction(reprint_action)
+        menu.addAction(toggle_auto)
+        menu.addAction(test_action)
+        menu.addAction(feed_action)
         menu.addSeparator()
         menu.addAction(quit_action)
         tray.setContextMenu(menu)
@@ -798,6 +992,84 @@ class AcarsBridgeApp(QMainWindow):
         tray.show()
         self._tray = tray
         self.debug.info("tray", available=True)
+
+    def _refresh_window_title(self) -> None:
+        self.setWindowTitle(
+            format_window_title(__version__, self.width(), self.height())
+        )
+
+    def resizeEvent(self, event) -> None:  # noqa: N802 - Qt override
+        super().resizeEvent(event)
+        self._refresh_window_title()
+
+    def showEvent(self, event) -> None:  # noqa: N802 - Qt override
+        super().showEvent(event)
+        self._refresh_window_title()
+
+    def _setup_hotkeys(self) -> None:
+        """Window-scoped shortcuts for printer panel actions (Phase A)."""
+        for shortcut in getattr(self, "_hotkey_shortcuts", []):
+            shortcut.setEnabled(False)
+            shortcut.deleteLater()
+        self._hotkey_shortcuts: list[QShortcut] = []
+        if not self.session.settings.hotkeys_enabled():
+            return
+        handlers = {
+            "reprint_last": self._action_reprint_last,
+            "toggle_auto_print": self._action_toggle_auto_print,
+            "test_print": self._action_test_print,
+            "feed": self._action_feed,
+        }
+        for name, seq in self.session.settings.hotkey_bindings().items():
+            if not seq:
+                continue
+            handler = handlers.get(name)
+            if handler is None:
+                continue
+            key_seq = QKeySequence(seq)
+            if key_seq.isEmpty():
+                continue
+            shortcut = QShortcut(key_seq, self)
+            shortcut.setContext(Qt.ShortcutContext.WindowShortcut)
+            shortcut.activated.connect(
+                lambda h=handler, n=name: self._run_action(n, h)
+            )
+            self._hotkey_shortcuts.append(shortcut)
+
+    def _action_reprint_last(self) -> None:
+        try:
+            result = self._actions.reprint_last()
+        except ActionError as exc:
+            self._flash(str(exc), error=True)
+            return
+        if result == "deferred":
+            self._flash("Reprint queued (sterile / power).")
+        else:
+            self._flash("Reprinted last strip.")
+
+    def _action_toggle_auto_print(self) -> None:
+        enabled = self._actions.toggle_auto_print()
+        combo = self._settings_widgets.get("auto_print")
+        if isinstance(combo, QComboBox):
+            combo.setCurrentText("on" if enabled else "off")
+        self._sync_detail_visibility()
+        self._flash(f"Auto-print {'on' if enabled else 'off'}.")
+
+    def _action_test_print(self) -> None:
+        try:
+            self._actions.test_print()
+        except ActionError as exc:
+            self._flash(str(exc), error=True)
+            return
+        self._flash("Test print sent.")
+
+    def _action_feed(self) -> None:
+        try:
+            self._actions.feed()
+        except ActionError as exc:
+            self._flash(str(exc), error=True)
+            return
+        self._flash("Feed.")
 
     def _show_from_tray(self) -> None:
         self.showNormal()
@@ -1238,12 +1510,7 @@ class AcarsBridgeApp(QMainWindow):
         self._flash("Printed.")
 
     def _test_print(self) -> None:
-        settings = self._printer_settings()
-        try:
-            self.session.print_manager.test_print(settings)
-            self._flash(f"Test print → {settings.destination}")
-        except Exception as exc:  # noqa: BLE001
-            self._flash(f"Test print failed: {exc}", error=True)
+        self._action_test_print()
 
     def _printer_settings(self) -> PrinterSettings:
         return self.session.settings.as_printer_settings()
@@ -1329,6 +1596,16 @@ class AcarsBridgeApp(QMainWindow):
             w["registration"].text().strip()
         )
         self.session.settings.set_auto_print(w["auto_print"].currentText() == "on")
+        self.session.settings.set_printable_types(
+            [key for key, box in w["printable_types"].items() if box.isChecked()]
+        )
+        self.session.settings.set_hotkeys_enabled(w["hotkeys"].currentText() == "on")
+        hotkey_bindings: dict[str, str] = {}
+        for key, edit in w["hotkey_edits"].items():
+            hotkey_bindings[key] = edit.keySequence().toString(
+                QKeySequence.SequenceFormat.PortableText
+            )
+        self.session.settings.set_hotkey_bindings(hotkey_bindings)
         self.session.settings.set_auto_connect(w["auto_connect"].currentText() == "on")
         self.session.settings.set_check_updates(
             w["check_updates"].currentText() == "on"
@@ -1336,6 +1613,9 @@ class AcarsBridgeApp(QMainWindow):
         self.session.settings.set_simbrief_user(w["simbrief_user"].text().strip())
         self.session.settings.set_simbrief_enabled(
             w["simbrief_enabled"].currentText() == "on"
+        )
+        self.session.settings.set_simbrief_ofp_tickets(
+            [key for key, box in w["ofp_tickets"].items() if box.isChecked()]
         )
         grace_min = int(w["simbrief_grace"].value())
         self.session.settings.set_simbrief_post_landing_grace_seconds(grace_min * 60)
@@ -1348,8 +1628,8 @@ class AcarsBridgeApp(QMainWindow):
         self.session.apply_sterile_settings()
         watcher = self.session.ensure_simbrief_watcher()
         watcher.config.post_landing_grace_seconds = float(grace_min * 60)
-        watcher.config.randomize_final = self.session.settings.simbrief_randomize_final()
         self.session.rebuild_printer()
+        self._setup_hotkeys()
         notes: list[str] = []
         self._refresh_header()
         self._tick_simbrief()

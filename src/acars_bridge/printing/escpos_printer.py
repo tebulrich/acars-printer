@@ -9,6 +9,58 @@ from acars_bridge.printing.base import PrinterError, PrinterSettings
 
 
 class EscPosMessagePrinter:
+    def feed(self, settings: PrinterSettings, lines: int | None = None) -> None:
+        """Advance paper without printing a message (cockpit FEED)."""
+        count = settings.tear_feed_lines if lines is None else max(1, int(lines))
+        try:
+            from escpos.printer import Dummy, File, Network
+        except ImportError as exc:  # pragma: no cover
+            raise PrinterError("python-escpos is not installed") from exc
+
+        destination = settings.destination
+        printer = None
+        try:
+            if destination.startswith("tcp://"):
+                parsed = urlparse(destination)
+                if not parsed.hostname:
+                    raise PrinterError("Invalid TCP printer destination.")
+                printer = Network(parsed.hostname, port=parsed.port or 9100, timeout=5)
+                self._feed_lines(printer, count)
+                printer.close()
+            elif destination.startswith("file://"):
+                path = Path(destination.removeprefix("file://"))
+                path.parent.mkdir(parents=True, exist_ok=True)
+                printer = File(str(path))
+                self._feed_lines(printer, count)
+                printer.close()
+            elif destination.startswith("win32://"):
+                printer_name = destination.removeprefix("win32://")
+                try:
+                    from escpos.printer import Win32Raw
+                except Exception as exc:  # pragma: no cover
+                    raise PrinterError("Win32Raw printer unavailable on this platform") from exc
+                printer = Win32Raw(printer_name)
+                printer.open()
+                self._feed_lines(printer, count)
+                printer.close()
+            elif destination.startswith("cups-raw://"):
+                printer_name = destination.removeprefix("cups-raw://")
+                if not printer_name:
+                    raise PrinterError("Invalid CUPS-raw printer destination.")
+                dummy = Dummy()
+                self._feed_lines(dummy, count)
+                payload = getattr(dummy, "output", b"") or b""
+                self._lp(printer_name, payload, options=["-o", "raw"])
+            else:
+                raise PrinterError(
+                    "Feed unsupported for this destination "
+                    "(use tcp://, file://, win32://, or cups-raw://)."
+                )
+        except PrinterError:
+            raise
+        except Exception as exc:
+            raise PrinterError(f"ESC/POS feed failed: {exc}") from exc
+
     def print(self, message: StoredMessage, formatted_body: str, settings: PrinterSettings) -> None:
         try:
             from escpos.printer import Dummy, File, Network

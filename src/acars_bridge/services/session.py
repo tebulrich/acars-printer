@@ -85,7 +85,6 @@ class AppSession:
                 post_landing_grace_seconds=float(
                     self.settings.simbrief_post_landing_grace_seconds()
                 ),
-                randomize_final=self.settings.simbrief_randomize_final(),
             )
             self.simbrief_watcher = SimBriefWatcher(
                 settings=self.settings,

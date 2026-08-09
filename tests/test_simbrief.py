@@ -71,12 +71,18 @@ def test_manual_unlock_forgets_last_ofp(app_session, sample_plan: SimBriefFlight
     assert app_session.settings.simbrief_last_ofp_id() == sample_plan.ofp_id
 
 
-def test_loadsheet_math_and_randomize(sample_plan: SimBriefFlightPlan) -> None:
+def test_loadsheet_final_matches_prelim_no_invented_deltas(
+    sample_plan: SimBriefFlightPlan,
+) -> None:
     prelim = build_preliminary_values(sample_plan)
+    final = build_final_values(sample_plan)
     assert prelim.pax_count == 150
-    final = build_final_values(sample_plan, randomize=True, rng=__import__("random").Random(0))
-    assert final.pax_delta is not None
-    assert abs(final.pax_delta) <= 3
+    assert final.pax_count == prelim.pax_count
+    assert final.cargo_weight == prelim.cargo_weight
+    assert final.zfw == prelim.zfw
+    assert final.tow == prelim.tow
+    assert final.pax_delta is None
+    assert final.cargo_delta is None
 
 
 def test_tickets_keep_full_route(sample_plan: SimBriefFlightPlan) -> None:

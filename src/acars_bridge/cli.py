@@ -143,7 +143,7 @@ def history(
 
 @app.callback()
 def main_callback() -> None:
-    """ACARS Print Bridge CLI."""
+    """ACARS Print Bridge CLI (local/source helper only)."""
 
 
 if __name__ == "__main__":

@@ -71,20 +71,17 @@ window fully quits the app.
 
 ### 4. Settings (do this once)
 
-Open the **Settings** tab:
+Tabs (no scrolling settings pages — each tab is a short page):
 
-| Field | What to put |
+| Tab | What to set |
 | --- | --- |
-| ACARS network | **Hoppie** (default), **SayIntentions.AI**, or **PMDG GFO**. Must match the aircraft. |
-| Printer | Your POS / Windows printer. Use **Test print** / Format tab to confirm paper comes out. |
-| Callsign filter | Optional. Empty = print every flight seen on this PC for the selected network. Set e.g. `SWR14` to only print that callsign. |
-| Aircraft registration | Optional tail for the print header. With a value: `D-AILA ----  DLH4MC 04AUG 1809Z`. Leave empty to omit the tail and `----` (callsign + time only). |
-| Paper width / cut | Match your roll (usually 80 mm). Leave cut/tear assist on for typical POS printers. |
-| Auto-connect | On by default - Connects when the app starts (still needs Administrator). |
-| Check for updates | On by default - looks for a newer GitHub release and offers one-click install of the Windows exe. |
-| Sterile until | APP section. Mutes thermal prints (ACARS + SimBrief) while airborne below this AGL, or on the ground at ≥40 kt. Queued strips flush when sterile ends. Needs SimConnect (MSFS). Default 1500 ft. |
-| Only when powered | APP section (off by default). Queue ACARS/SimBrief prints until the aircraft battery is on. |
-| SimBrief | Enable + username/pilot ID to auto-print flight plan and loadsheets. See [SimBrief](#simbrief-ofp--loadsheets). |
+| **Format** | Printer, paper width/cut, strip look. Use **Save and test print**. |
+| **Network** | Hoppie / SayIntentions / PMDG GFO, optional callsign filter, registration. |
+| **Print** | Which ACARS types and SimBrief OFP sections may auto-print. |
+| **Hotkeys** | Enable + bindings (defaults Ctrl+Shift+R/A/T/F; clear to unbind). Also on the tray. |
+| **Settings** | Auto-print, auto-connect, updates, sterile until, only when powered, SimBrief user/grace, Print OFP / Unlock. |
+
+Click **Save settings** on Network / Print / Hotkeys / Settings after changes.
 
 Click **Save settings**. Put the logon / API key and flight callsign in the
 **aircraft** ACARS pages. The plane's client must send the requests; this
@@ -98,7 +95,8 @@ app only watches and prints.
 4. Printed copies should appear on the printer; the Messages list shows what was
    stored.
 
-Header chips show callsign, LINK, **STERILE**, OFP status, and SIM/UTC Zulu.
+Header chips show callsign, LINK, **STERILE**, **PWR** (when Only when powered
+is on), OFP status, and SIM/UTC Zulu.
 **Print OFP** / **Unlock** fetch or clear the locked SimBrief plan. Unlock also
 lets the same OFP lock again.
 
@@ -124,7 +122,8 @@ Click **Disconnect**, then close the app.
   (see [Compatibility](#compatibility)).
 - **STERILE on?** Below your sterile AGL or taxiing ≥40 kt, prints queue and
   release when sterile ends (needs SimConnect connected).
-- **Only when powered?** Prints wait until the aircraft battery is on.
+- **Only when powered?** Prints wait until the aircraft is electrically up
+  (see Settings), then ~10 s settle. **PWR** chip shows on/off and queue depth.
 
 ## SimBrief OFP + loadsheets
 
@@ -133,14 +132,15 @@ aircraft where ACARS tap is limited (e.g. Fenix). When enabled:
 
 1. Polls SimBrief about once a minute for a **new eligible OFP** (new `ofp_id`,
    scheduled out in the future or within ~60 minutes past).
-2. On lock: prints **flight plan** (with **DATE** / STD / STA), **takeoff/weights**
-   card (from the OFP), and **preliminary** loadsheet (full route).
-   **Fenix** airframes (SimBrief aircraft name contains `FENIX`) skip both
+2. On lock: prints the **OFP sections** enabled in Settings (default: flight
+   plan with DATE/STD/STA, takeoff/weights, preliminary loadsheet).
+   **Fenix** airframes (SimBrief aircraft name contains `FENIX`) always skip
    loadsheets — the aircraft EFB already prints them.
-3. **Final** loadsheet when doors close after boarding (preferred). If doors
-   never open / stay closed, falls back to T−5 before SOBT (sim Zulu if
-   SimConnect is up, else wall UTC) or sustained taxi GS 3–40 kt — never while
-   sterile or while doors are still open. Skipped for Fenix.
+3. **Final** loadsheet (if that section is enabled) when doors close after
+   boarding (preferred). If doors never open / stay closed, falls back to T−5
+   before SOBT (sim Zulu if SimConnect is up, else wall UTC) or sustained taxi
+   GS 3–40 kt — never while sterile or while doors are still open. Skipped for
+   Fenix.
 4. If takeoff happens without a final, prints the missed final **once after
    landing** (not in climb). Skipped for Fenix.
 5. Unlocks after landing + grace (default 10 minutes), or earlier on a new OFP /
@@ -173,26 +173,6 @@ scripts\build_windows_exe.bat
 (PowerShell alternative: `.\scripts\build_windows_exe.ps1`)
 
 Output: `dist\ACARS Print Bridge.exe` (run elevated).
-
-## Run from source
-
-```powershell
-uv sync
-# elevated shell
-uv run acars-bridge ui
-```
-
-## CLI
-
-```powershell
-uv run acars-bridge version
-uv run acars-bridge configure --callsign SWR14 --printer win32://POS-80
-uv run acars-bridge status
-uv run acars-bridge test-print
-uv run acars-bridge history
-```
-
-The desktop UI Connect path is the local tap described above.
 
 ## Tests
 

@@ -115,9 +115,9 @@ def app_stylesheet() -> str:
         background-color: {c["panel_alt"]};
         color: {c["text"]};
         border: 1px solid {c["border"]};
-        border-radius: 6px;
-        padding: 8px 14px;
-        min-height: 36px;
+        border-radius: 5px;
+        padding: 6px 12px;
+        min-height: 30px;
         font-weight: 600;
     }}
     QPushButton:hover {{
@@ -145,45 +145,92 @@ def app_stylesheet() -> str:
         border: 1px solid {c["border"]};
         color: {c["muted"]};
     }}
-    QLineEdit, QPlainTextEdit, QTextEdit, QComboBox, QSpinBox {{
+    QLineEdit, QComboBox, QSpinBox, QKeySequenceEdit {{
         background-color: {c["panel_alt"]};
         color: {c["text"]};
         border: 1px solid {c["border"]};
-        border-radius: 6px;
+        border-radius: 5px;
+        padding: 5px 10px;
+        min-height: 30px;
+        selection-background-color: {c["accent_dim"]};
+        selection-color: {c["bg"]};
+    }}
+    QPlainTextEdit, QTextEdit {{
+        background-color: {c["panel_alt"]};
+        color: {c["text"]};
+        border: 1px solid {c["border"]};
+        border-radius: 5px;
         padding: 8px 10px;
-        min-height: 36px;
+        min-height: 72px;
         selection-background-color: {c["accent_dim"]};
         selection-color: {c["bg"]};
     }}
     QSpinBox {{
-        padding-right: 4px;
+        padding-right: 18px;
     }}
     QSpinBox::up-button, QSpinBox::down-button {{
         background-color: {c["border"]};
         border: none;
-        width: 32px;
+        width: 18px;
         subcontrol-origin: border;
     }}
     QSpinBox::up-button {{
         subcontrol-position: top right;
         margin: 1px 1px 0 0;
-        border-top-right-radius: 5px;
+        border-top-right-radius: 4px;
+        height: 14px;
     }}
     QSpinBox::down-button {{
         subcontrol-position: bottom right;
         margin: 0 1px 1px 0;
-        border-bottom-right-radius: 5px;
+        border-bottom-right-radius: 4px;
+        height: 14px;
     }}
     QSpinBox::up-button:hover, QSpinBox::down-button:hover {{
         background-color: {c["accent_dim"]};
     }}
-    QSpinBox::up-arrow, QSpinBox::down-arrow {{
-        width: 12px;
-        height: 12px;
+    /* Fusion + QSS clears default arrows — draw chevrons explicitly. */
+    QSpinBox::up-arrow {{
+        width: 0;
+        height: 0;
+        border-left: 4px solid transparent;
+        border-right: 4px solid transparent;
+        border-bottom: 5px solid {c["text"]};
+    }}
+    QSpinBox::down-arrow {{
+        width: 0;
+        height: 0;
+        border-left: 4px solid transparent;
+        border-right: 4px solid transparent;
+        border-top: 5px solid {c["text"]};
     }}
     QComboBox::drop-down {{
         border: none;
-        width: 28px;
+        width: 22px;
+    }}
+    QComboBox::down-arrow {{
+        width: 0;
+        height: 0;
+        margin-right: 6px;
+        border-left: 4px solid transparent;
+        border-right: 4px solid transparent;
+        border-top: 5px solid {c["muted"]};
+    }}
+    QCheckBox {{
+        spacing: 6px;
+        min-height: 22px;
+        padding: 0;
+    }}
+    QCheckBox::indicator {{
+        width: 14px;
+        height: 14px;
+        border: 1px solid {c["border"]};
+        border-radius: 3px;
+        background: {c["panel_alt"]};
+    }}
+    QCheckBox::indicator:checked {{
+        background: {c["accent_dim"]};
+        border-color: {c["accent_dim"]};
     }}
     QComboBox QAbstractItemView {{
         background-color: {c["panel"]};
@@ -202,10 +249,10 @@ def app_stylesheet() -> str:
         color: {c["muted"]};
         border: 1px solid {c["border"]};
         border-bottom: none;
-        padding: 8px 16px;
-        margin-right: 4px;
-        border-top-left-radius: 6px;
-        border-top-right-radius: 6px;
+        padding: 6px 12px;
+        margin-right: 3px;
+        border-top-left-radius: 5px;
+        border-top-right-radius: 5px;
     }}
     QTabBar::tab:selected {{
         background: {c["panel"]};

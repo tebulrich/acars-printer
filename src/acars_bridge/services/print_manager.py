@@ -150,3 +150,10 @@ class PrintManager:
         )
         with self._lock:
             self._printer.print(dummy, body, settings)
+
+    def feed(self, settings: PrinterSettings, lines: int | None = None) -> None:
+        feed_fn = getattr(self._printer, "feed", None)
+        if not callable(feed_fn):
+            raise PrinterError("This printer backend does not support feed.")
+        with self._lock:
+            feed_fn(settings, lines)

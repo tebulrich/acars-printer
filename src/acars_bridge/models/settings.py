@@ -361,9 +361,26 @@ class SettingsStore:
             tear_feed_lines=self.print_tear_feed(),
         )
 
+    # ACARS types exposed in Settings checkboxes (single printer; mute only).
+    PRINTABLE_TYPE_CHOICES: tuple[str, ...] = ("cpdlc", "telex", "inforeq")
+    _PRINTABLE_TYPES_DEFAULT = "cpdlc,telex,inforeq"
+
     def printable_types(self) -> set[str]:
-        raw = self.get("printable_types", "cpdlc,telex,inforeq") or "cpdlc,telex,inforeq"
+        raw = self.get("printable_types", self._PRINTABLE_TYPES_DEFAULT)
+        if raw is None:
+            raw = self._PRINTABLE_TYPES_DEFAULT
         return {part.strip().lower() for part in raw.split(",") if part.strip()}
+
+    def set_printable_types(self, types: list[str] | set[str] | tuple[str, ...]) -> None:
+        allowed = set(self.PRINTABLE_TYPE_CHOICES)
+        cleaned = sorted(
+            {
+                part.strip().lower()
+                for part in types
+                if isinstance(part, str) and part.strip().lower() in allowed
+            }
+        )
+        self.set("printable_types", ",".join(cleaned))
 
     def next_downlink_min(self) -> int:
         raw = self.get("next_downlink_min", "1") or "1"
@@ -390,6 +407,108 @@ class SettingsStore:
     def set_simbrief_enabled(self, enabled: bool) -> None:
         self.set("simbrief_enabled", "1" if enabled else "0")
 
+    OFP_TICKET_CHOICES: tuple[str, ...] = (
+        "flight_plan",
+        "takeoff_data",
+        "loadsheet_prelim",
+        "loadsheet_final",
+    )
+    _OFP_TICKETS_DEFAULT = (
+        "flight_plan,takeoff_data,loadsheet_prelim,loadsheet_final"
+    )
+
+    def simbrief_ofp_tickets(self) -> set[str]:
+        raw = self.get("simbrief_ofp_tickets", self._OFP_TICKETS_DEFAULT)
+        if raw is None:
+            raw = self._OFP_TICKETS_DEFAULT
+        allowed = set(self.OFP_TICKET_CHOICES)
+        return {
+            part.strip().lower()
+            for part in raw.split(",")
+            if part.strip().lower() in allowed
+        }
+
+    def set_simbrief_ofp_tickets(
+        self, tickets: list[str] | set[str] | tuple[str, ...]
+    ) -> None:
+        allowed = set(self.OFP_TICKET_CHOICES)
+        cleaned = sorted(
+            {
+                part.strip().lower()
+                for part in tickets
+                if isinstance(part, str) and part.strip().lower() in allowed
+            }
+        )
+        self.set("simbrief_ofp_tickets", ",".join(cleaned))
+
+    def simbrief_ofp_ticket_enabled(self, ticket_type: str) -> bool:
+        return ticket_type.strip().lower() in self.simbrief_ofp_tickets()
+
+    def hotkeys_enabled(self) -> bool:
+        return (self.get("hotkeys_enabled", "1") or "1") in {"1", "true", "yes", "on"}
+
+    def set_hotkeys_enabled(self, enabled: bool) -> None:
+        self.set("hotkeys_enabled", "1" if enabled else "0")
+
+    HOTKEY_ACTIONS: tuple[str, ...] = (
+        "reprint_last",
+        "toggle_auto_print",
+        "test_print",
+        "feed",
+    )
+    _HOTKEY_DEFAULTS: dict[str, str] = {
+        "reprint_last": "Ctrl+Shift+R",
+        "toggle_auto_print": "Ctrl+Shift+A",
+        "test_print": "Ctrl+Shift+T",
+        "feed": "Ctrl+Shift+F",
+    }
+
+    def hotkey_bindings(self) -> dict[str, str]:
+        import json
+
+        out = dict(self._HOTKEY_DEFAULTS)
+        raw = self.get("hotkey_bindings")
+        if not raw:
+            return out
+        try:
+            data = json.loads(raw)
+        except (TypeError, ValueError, json.JSONDecodeError):
+            return out
+        if not isinstance(data, dict):
+            return out
+        for key in self.HOTKEY_ACTIONS:
+            if key not in data:
+                continue
+            value = data[key]
+            if value is None:
+                out[key] = ""
+            else:
+                out[key] = str(value).strip()
+        return out
+
+    def set_hotkey_bindings(self, bindings: dict[str, str]) -> None:
+        import json
+
+        cleaned: dict[str, str] = {}
+        for key in self.HOTKEY_ACTIONS:
+            if key not in bindings:
+                cleaned[key] = self._HOTKEY_DEFAULTS[key]
+                continue
+            cleaned[key] = str(bindings.get(key) or "").strip()
+        self.set("hotkey_bindings", json.dumps(cleaned, sort_keys=True))
+
+    def hotkey_sequence(self, action: str) -> str:
+        key = action.strip().lower()
+        return self.hotkey_bindings().get(key, self._HOTKEY_DEFAULTS.get(key, ""))
+
+    def set_hotkey_sequence(self, action: str, sequence: str) -> None:
+        key = action.strip().lower()
+        if key not in self.HOTKEY_ACTIONS:
+            return
+        bindings = self.hotkey_bindings()
+        bindings[key] = (sequence or "").strip()
+        self.set_hotkey_bindings(bindings)
+
     def simbrief_post_landing_grace_seconds(self) -> int:
         raw = self.get("simbrief_post_landing_grace_seconds", "600")
         try:
@@ -403,17 +522,6 @@ class SettingsStore:
         except (TypeError, ValueError):
             value = 600
         self.set("simbrief_post_landing_grace_seconds", str(max(60, min(7200, value))))
-
-    def simbrief_randomize_final(self) -> bool:
-        return (self.get("simbrief_randomize_final", "0") or "0") in {
-            "1",
-            "true",
-            "yes",
-            "on",
-        }
-
-    def set_simbrief_randomize_final(self, enabled: bool) -> None:
-        self.set("simbrief_randomize_final", "1" if enabled else "0")
 
     def simbrief_last_ofp_id(self) -> str | None:
         value = (self.get("simbrief_last_ofp_id") or "").strip()

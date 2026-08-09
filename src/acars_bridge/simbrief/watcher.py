@@ -78,7 +78,6 @@ class WatcherConfig:
     post_landing_grace_seconds: float = 600.0
     max_lock_seconds: float = 8 * 3600.0
     sobt_late_grace: timedelta = timedelta(minutes=60)
-    randomize_final: bool = False
     min_backoff_seconds: float = 60.0
     max_backoff_seconds: float = 600.0
 
@@ -383,9 +382,7 @@ class SimBriefWatcher:
         self.state.rolling_since = None
         self.state.doors_seen_open = False
         self.state.doors_closed_since = None
-        self.state.final_values = build_final_values(
-            plan, randomize=self.settings.simbrief_randomize_final()
-        )
+        self.state.final_values = build_final_values(plan)
         self.settings.set_simbrief_last_ofp_id(plan.ofp_id)
 
         if print_all_three:
@@ -393,7 +390,7 @@ class SimBriefWatcher:
             # at door-close / T−5 / taxi — including it here caused a duplicate.
             # Fenix: FP + takeoff only (aircraft prints its own loadsheet).
             self._print_bundle(self._bundle_fp_prelim(plan), label="print-now")
-            if is_fenix_aircraft(plan):
+            if self._skips_final_loadsheet(plan):
                 self.state.final_printed = True
                 self.state.phase = WatcherPhase.FINAL_PRINTED
             else:
@@ -402,7 +399,7 @@ class SimBriefWatcher:
             self.state.status = f"print now · {plan.callsign}"
         else:
             self._print_bundle(self._bundle_fp_prelim(plan), label="lock")
-            if is_fenix_aircraft(plan):
+            if self._skips_final_loadsheet(plan):
                 self.state.final_printed = True
                 self.state.phase = WatcherPhase.FINAL_PRINTED
             self.state.status = (
@@ -410,10 +407,15 @@ class SimBriefWatcher:
             )
         self._persist()
 
+    def _skips_final_loadsheet(self, plan: SimBriefFlightPlan) -> bool:
+        if is_fenix_aircraft(plan):
+            return True
+        return not self.settings.simbrief_ofp_ticket_enabled("loadsheet_final")
+
     def _should_print_final(self, snapshot: SimSnapshot | None, now_utc: datetime) -> bool:
         if self.state.final_printed or self.state.plan is None:
             return False
-        if is_fenix_aircraft(self.state.plan):
+        if self._skips_final_loadsheet(self.state.plan):
             return False
         if self.sterile.is_blocking:
             return False
@@ -470,6 +472,8 @@ class SimBriefWatcher:
     def _print_final(self, plan: SimBriefFlightPlan, *, reason: str) -> None:
         if is_fenix_aircraft(plan):
             return
+        if not self.settings.simbrief_ofp_ticket_enabled("loadsheet_final"):
+            return
         values = self.state.final_values or build_preliminary_values(plan)
         width = self._ticket_width()
         body = render_loadsheet_ticket(plan, "FINAL", values, width=width)
@@ -477,12 +481,21 @@ class SimBriefWatcher:
 
     def _bundle_fp_prelim(self, plan: SimBriefFlightPlan) -> PrintBundle:
         width = self._ticket_width()
-        tickets: PrintBundle = [
-            ("flight_plan", render_flight_plan_ticket(plan, width=width)),
-            ("takeoff_data", render_takeoff_data_ticket(plan, width=width)),
-        ]
+        enabled = self.settings.simbrief_ofp_tickets()
+        tickets: PrintBundle = []
+        if "flight_plan" in enabled:
+            tickets.append(
+                ("flight_plan", render_flight_plan_ticket(plan, width=width))
+            )
+        if "takeoff_data" in enabled:
+            tickets.append(
+                ("takeoff_data", render_takeoff_data_ticket(plan, width=width))
+            )
         # Fenix A32x has its own EFB loadsheet — do not print ours.
-        if not is_fenix_aircraft(plan):
+        if (
+            "loadsheet_prelim" in enabled
+            and not is_fenix_aircraft(plan)
+        ):
             prelim = build_preliminary_values(plan)
             tickets.append(
                 (
