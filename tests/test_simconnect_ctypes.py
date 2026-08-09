@@ -17,8 +17,8 @@ def test_simobject_payload_offset_matches_header_size():
 
 
 def test_telemetry_field_count_matches_electrical_simvars():
-    # 14 core/door/battery-switch fields + electrical block.
-    assert len(TelemetryData._fields_) == 14 + len(ELECTRICAL_SIMVARS)
+    # 16 core/door/battery-switch/lat-lon fields + electrical block.
+    assert len(TelemetryData._fields_) == 16 + len(ELECTRICAL_SIMVARS)
     assert ctypes.sizeof(TelemetryData) == len(TelemetryData._fields_) * 8
 
 

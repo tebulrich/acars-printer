@@ -361,6 +361,119 @@ class SettingsStore:
             tear_feed_lines=self.print_tear_feed(),
         )
 
+    def _user_print_profiles_raw(self) -> dict[str, dict]:
+        import json
+
+        raw = self.get("print_profiles_json")
+        if not raw:
+            return {}
+        try:
+            data = json.loads(raw)
+        except json.JSONDecodeError:
+            return {}
+        if not isinstance(data, dict):
+            return {}
+        out: dict[str, dict] = {}
+        for name, payload in data.items():
+            if isinstance(name, str) and isinstance(payload, dict):
+                out[name] = payload
+        return out
+
+    def _set_user_print_profiles_raw(self, profiles: dict[str, dict]) -> None:
+        import json
+
+        if not profiles:
+            self.set("print_profiles_json", None)
+            return
+        self.set("print_profiles_json", json.dumps(profiles, separators=(",", ":")))
+
+    def list_print_profiles(self) -> list["PrintProfile"]:
+        from acars_bridge.printing.profiles import (
+            PrintProfile,
+            builtin_profiles,
+            sanitize_payload,
+        )
+
+        result: list[PrintProfile] = list(builtin_profiles())
+        for name, payload in sorted(self._user_print_profiles_raw().items()):
+            result.append(
+                PrintProfile(
+                    id=name,
+                    label=name,
+                    builtin=False,
+                    payload=sanitize_payload(payload),
+                )
+            )
+        return result
+
+    def get_print_profile(self, profile_id: str) -> "PrintProfile | None":
+        needle = (profile_id or "").strip()
+        if not needle:
+            return None
+        for profile in self.list_print_profiles():
+            if profile.id == needle or profile.label == needle:
+                return profile
+        return None
+
+    def active_print_profile(self) -> str | None:
+        value = (self.get("active_print_profile") or "").strip()
+        return value or None
+
+    def set_active_print_profile(self, profile_id: str | None) -> None:
+        cleaned = (profile_id or "").strip()
+        self.set("active_print_profile", cleaned or None)
+
+    def apply_print_profile(self, profile_id: str) -> None:
+        from acars_bridge.printing.profiles import sanitize_payload
+
+        profile = self.get_print_profile(profile_id)
+        if profile is None:
+            raise ValueError(f"Unknown print profile: {profile_id}")
+        payload = sanitize_payload(profile.payload)
+        self.set_paper_width(str(payload["paper_width"]))
+        self.set_cut_enabled(bool(payload["cut_enabled"]))
+        self.set_print_font(str(payload["print_font"]))
+        self.set_print_bold(bool(payload["print_bold"]))
+        self.set_print_render_mode(str(payload["print_render_mode"]))
+        self.set_print_char_width(int(payload["print_char_width"]))
+        self.set_print_char_height(int(payload["print_char_height"]))
+        self.set_print_line_spacing_dots(payload["print_line_spacing_dots"])
+        self.set_print_glyph_px(int(payload["print_glyph_px"]))
+        self.set_print_line_gap_px(int(payload["print_line_gap_px"]))
+        self.set_print_columns(payload["print_columns"])
+        self.set_print_lead_in(int(payload["print_lead_in"]))
+        self.set_print_tear_feed(int(payload["print_tear_feed"]))
+        self.set_active_print_profile(profile.id)
+
+    def save_user_print_profile(self, name: str) -> str:
+        from acars_bridge.printing.profiles import (
+            normalize_profile_name,
+            profile_payload_from_settings,
+        )
+
+        cleaned = normalize_profile_name(name)
+        profiles = self._user_print_profiles_raw()
+        profiles[cleaned] = profile_payload_from_settings(self)
+        self._set_user_print_profiles_raw(profiles)
+        self.set_active_print_profile(cleaned)
+        return cleaned
+
+    def delete_user_print_profile(self, profile_id: str) -> None:
+        from acars_bridge.printing.profiles import BUILTIN_PROFILE_IDS
+
+        needle = (profile_id or "").strip()
+        if not needle:
+            raise ValueError("Profile name is required")
+        if needle in BUILTIN_PROFILE_IDS:
+            raise ValueError("Built-in profiles cannot be deleted")
+        profiles = self._user_print_profiles_raw()
+        if needle not in profiles:
+            raise ValueError(f"Unknown user print profile: {needle}")
+        del profiles[needle]
+        self._set_user_print_profiles_raw(profiles)
+        if self.active_print_profile() == needle:
+            self.set_active_print_profile(None)
+
     # ACARS types exposed in Settings checkboxes (single printer; mute only).
     PRINTABLE_TYPE_CHOICES: tuple[str, ...] = ("cpdlc", "telex", "inforeq")
     _PRINTABLE_TYPES_DEFAULT = "cpdlc,telex,inforeq"
@@ -593,3 +706,52 @@ class SettingsStore:
 
     def set_print_when_powered(self, enabled: bool) -> None:
         self.set("print_when_powered", "1" if enabled else "0")
+
+    # --- Auto destination WX (real AWC / VATSIM only) ---
+
+    WX_AUTO_KIND_CHOICES: tuple[str, ...] = ("atis", "metar", "taf")
+    _WX_AUTO_KINDS_DEFAULT = "atis,metar,taf"
+    _WX_AUTO_NM_DEFAULT = 150
+
+    def wx_auto_enabled(self) -> bool:
+        return (self.get("wx_auto_enabled", "0") or "0") in {"1", "true", "yes", "on"}
+
+    def set_wx_auto_enabled(self, enabled: bool) -> None:
+        self.set("wx_auto_enabled", "1" if enabled else "0")
+
+    def wx_auto_nm(self) -> int:
+        raw = self.get("wx_auto_nm", str(self._WX_AUTO_NM_DEFAULT))
+        try:
+            value = int(raw or self._WX_AUTO_NM_DEFAULT)
+        except ValueError:
+            return self._WX_AUTO_NM_DEFAULT
+        return max(10, min(500, value))
+
+    def set_wx_auto_nm(self, nm: int | str) -> None:
+        try:
+            value = int(nm)
+        except (TypeError, ValueError):
+            value = self._WX_AUTO_NM_DEFAULT
+        self.set("wx_auto_nm", str(max(10, min(500, value))))
+
+    def wx_auto_kinds(self) -> set[str]:
+        raw = self.get("wx_auto_kinds", self._WX_AUTO_KINDS_DEFAULT)
+        if raw is None:
+            raw = self._WX_AUTO_KINDS_DEFAULT
+        allowed = set(self.WX_AUTO_KIND_CHOICES)
+        return {
+            part.strip().lower()
+            for part in raw.split(",")
+            if part.strip().lower() in allowed
+        }
+
+    def set_wx_auto_kinds(self, kinds: list[str] | set[str] | tuple[str, ...]) -> None:
+        allowed = set(self.WX_AUTO_KIND_CHOICES)
+        cleaned = sorted(
+            {
+                part.strip().lower()
+                for part in kinds
+                if isinstance(part, str) and part.strip().lower() in allowed
+            }
+        )
+        self.set("wx_auto_kinds", ",".join(cleaned))

@@ -20,6 +20,7 @@ from PySide6.QtWidgets import (
     QFormLayout,
     QFrame,
     QHBoxLayout,
+    QInputDialog,
     QKeySequenceEdit,
     QLabel,
     QLineEdit,
@@ -99,7 +100,9 @@ class AcarsBridgeApp(QMainWindow):
         self._bridge.new_messages.connect(self._on_new_messages)
         self._simbrief_pool = ThreadPoolExecutor(max_workers=1, thread_name_prefix="simbrief")
         self._simbrief_poll_busy = False
+        self._auto_wx_busy = False
         self._last_sterile = False
+        self.session.ensure_auto_wx()
 
         self.debug = DebugLog(
             session.paths.root / "debug.log",
@@ -366,6 +369,31 @@ class AcarsBridgeApp(QMainWindow):
         page_layout.setContentsMargins(14, 12, 14, 10)
         page_layout.setSpacing(10)
 
+        profile = QComboBox()
+        profile.setMinimumWidth(200)
+        profile.setToolTip(
+            "Named thermal presets (built-in + your saved). Apply loads knobs; "
+            "printer destination stays unless you change it below."
+        )
+        apply_profile_btn = QPushButton("Apply")
+        apply_profile_btn.setToolTip("Load the selected profile into the Format knobs")
+        save_profile_btn = QPushButton("Save as…")
+        save_profile_btn.setToolTip("Save current Format knobs as a named profile")
+        delete_profile_btn = QPushButton("Delete")
+        delete_profile_btn.setToolTip("Delete a user-saved profile (built-ins stay)")
+
+        profile_row = QHBoxLayout()
+        profile_row.setContentsMargins(0, 0, 0, 0)
+        profile_row.setSpacing(8)
+        profile_lbl = QLabel("Profile")
+        profile_lbl.setObjectName("Muted")
+        profile_row.addWidget(profile_lbl)
+        profile_row.addWidget(profile, stretch=1)
+        profile_row.addWidget(apply_profile_btn)
+        profile_row.addWidget(save_profile_btn)
+        profile_row.addWidget(delete_profile_btn)
+        page_layout.addLayout(profile_row)
+
         printer = QComboBox()
         labels = [c.label for c in self._printer_choices]
         printer.addItems(labels)
@@ -479,6 +507,7 @@ class AcarsBridgeApp(QMainWindow):
         glyph_layout.addWidget(glyph_hint, stretch=1)
 
         self._format_widgets = {
+            "profile": profile,
             "printer": printer,
             "width": width,
             "cut": cut,
@@ -494,6 +523,7 @@ class AcarsBridgeApp(QMainWindow):
             "print_lead_in": print_lead_in,
             "print_tear_feed": print_tear_feed,
             "glyph_hint": glyph_hint,
+            "delete_profile": delete_profile_btn,
         }
 
         columns = QHBoxLayout()
@@ -536,9 +566,21 @@ class AcarsBridgeApp(QMainWindow):
         _sync_print_mode_widgets()
         self._sync_format_mode_widgets = _sync_print_mode_widgets
 
+        apply_profile_btn.clicked.connect(
+            lambda: self._run_action("apply_print_profile", self._apply_selected_print_profile)
+        )
+        save_profile_btn.clicked.connect(
+            lambda: self._run_action("save_print_profile", self._save_as_print_profile)
+        )
+        delete_profile_btn.clicked.connect(
+            lambda: self._run_action("delete_print_profile", self._delete_selected_print_profile)
+        )
+        profile.currentIndexChanged.connect(lambda _i: self._sync_profile_delete_enabled())
+        self._refresh_print_profile_combo()
+
         help_lbl = QLabel(
-            "Change a value, then Save and test print. Exact size: Text height 8 ≈ 1 mm "
-            "on a typical POS-80 — if letters look ~1 mm too tall, try 16–18."
+            "Pick a profile (or tweak knobs), then Save and test print. Exact size: "
+            "Text height 8 ≈ 1 mm on a typical POS-80 — if letters look ~1 mm too tall, try 16–18."
         )
         help_lbl.setObjectName("Muted")
         help_lbl.setWordWrap(True)
@@ -563,7 +605,7 @@ class AcarsBridgeApp(QMainWindow):
         )
         reset_btn = QPushButton("Reset to defaults")
         reset_btn.setToolTip(
-            "Restore format defaults (keeps your printer). Does not print."
+            "Apply POS-80 default profile (keeps your printer). Does not print."
         )
         reset_btn.clicked.connect(
             lambda: self._run_action("reset_format", self._reset_format_defaults)
@@ -622,6 +664,26 @@ class AcarsBridgeApp(QMainWindow):
             box = QCheckBox(ofp_labels.get(key, key))
             box.setChecked(key in enabled_ofp)
             ofp_checks[key] = box
+
+        wx_auto_enabled = QCheckBox("Auto dest WX")
+        wx_auto_enabled.setChecked(self.session.settings.wx_auto_enabled())
+        wx_auto_enabled.setToolTip(
+            "When within the NM ring of the SimBrief destination and airborne "
+            "(sterile/power clear), print real ATIS/METAR/TAF once per OFP. "
+            "Does not use Hoppie inforeq or invent weather."
+        )
+        wx_auto_nm = QSpinBox()
+        wx_auto_nm.setRange(10, 500)
+        wx_auto_nm.setSuffix(" NM")
+        wx_auto_nm.setValue(self.session.settings.wx_auto_nm())
+        wx_auto_nm.setToolTip("Print when this close to destination (great-circle NM).")
+        wx_kind_checks: dict[str, QCheckBox] = {}
+        wx_kind_labels = {"atis": "ATIS", "metar": "METAR", "taf": "TAF"}
+        enabled_wx = self.session.settings.wx_auto_kinds()
+        for key in self.session.settings.WX_AUTO_KIND_CHOICES:
+            box = QCheckBox(wx_kind_labels.get(key, key))
+            box.setChecked(key in enabled_wx)
+            wx_kind_checks[key] = box
 
         hotkeys = QComboBox()
         hotkeys.addItems(["on", "off"])
@@ -710,6 +772,9 @@ class AcarsBridgeApp(QMainWindow):
             "auto_print": auto_print,
             "printable_types": type_checks,
             "ofp_tickets": ofp_checks,
+            "wx_auto_enabled": wx_auto_enabled,
+            "wx_auto_nm": wx_auto_nm,
+            "wx_auto_kinds": wx_kind_checks,
             "hotkeys": hotkeys,
             "hotkey_edits": hotkey_edits,
             "hotkey_labels": hotkey_labels,
@@ -807,13 +872,37 @@ class AcarsBridgeApp(QMainWindow):
         ofp_col.addStretch(1)
         ofp.addRow(ofp_host)
 
+        wx = self._form_column("DEST WX")
+        wx_host = QWidget()
+        wx_col = QVBoxLayout(wx_host)
+        wx_col.setContentsMargins(0, 0, 0, 0)
+        wx_col.setSpacing(6)
+        wx_col.addWidget(w["wx_auto_enabled"])
+        nm_row = QHBoxLayout()
+        nm_row.setContentsMargins(0, 0, 0, 0)
+        nm_row.setSpacing(8)
+        nm_lbl = QLabel("Within")
+        nm_lbl.setObjectName("Muted")
+        nm_row.addWidget(nm_lbl)
+        nm_row.addWidget(w["wx_auto_nm"], stretch=1)
+        nm_wrap = QWidget()
+        nm_wrap.setLayout(nm_row)
+        wx_col.addWidget(nm_wrap)
+        for key in self.session.settings.WX_AUTO_KIND_CHOICES:
+            wx_col.addWidget(w["wx_auto_kinds"][key])
+        wx_col.addStretch(1)
+        wx.addRow(wx_host)
+
         self._add_form_column(columns, acars)
         self._add_form_column(columns, ofp)
+        self._add_form_column(columns, wx)
         page_layout.addLayout(columns)
 
         help_lbl = QLabel(
             "Choose what may auto-print. Auto-print master switch is on Settings. "
-            "Fenix always skips loadsheets (EFB). Strip layout is on Format."
+            "Dest WX uses live VATSIM ATIS + aviationweather.gov (once per OFP when "
+            "airborne inside the NM ring). Fenix always skips loadsheets (EFB). "
+            "Strip layout is on Format."
         )
         help_lbl.setObjectName("Muted")
         help_lbl.setWordWrap(True)
@@ -1515,6 +1604,135 @@ class AcarsBridgeApp(QMainWindow):
     def _printer_settings(self) -> PrinterSettings:
         return self.session.settings.as_printer_settings()
 
+    def _refresh_print_profile_combo(self) -> None:
+        w = getattr(self, "_format_widgets", None)
+        if not w or "profile" not in w:
+            return
+        combo: QComboBox = w["profile"]
+        active = self.session.settings.active_print_profile()
+        combo.blockSignals(True)
+        combo.clear()
+        for profile in self.session.settings.list_print_profiles():
+            combo.addItem(profile.label, profile.id)
+        if active:
+            idx = combo.findData(active)
+            if idx < 0:
+                idx = combo.findText(active)
+            if idx >= 0:
+                combo.setCurrentIndex(idx)
+        combo.blockSignals(False)
+        self._sync_profile_delete_enabled()
+
+    def _sync_profile_delete_enabled(self) -> None:
+        w = getattr(self, "_format_widgets", None)
+        if not w or "delete_profile" not in w:
+            return
+        profile_id = str(w["profile"].currentData() or "")
+        profile = self.session.settings.get_print_profile(profile_id)
+        builtin = bool(getattr(profile, "builtin", True)) if profile else True
+        w["delete_profile"].setEnabled(profile is not None and not builtin)
+
+    def _reload_format_widgets_from_settings(self) -> None:
+        """Push live settings into Format controls (keeps printer destination)."""
+        from acars_bridge.printing.bitmap_render import mm_hint
+
+        w = self._format_widgets
+        s = self.session.settings
+        width_idx = w["width"].findData(s.paper_width())
+        if width_idx >= 0:
+            w["width"].setCurrentIndex(width_idx)
+        w["cut"].setCurrentText("on" if s.cut_enabled() else "off")
+        mode_idx = w["print_mode"].findData(s.print_render_mode())
+        if mode_idx >= 0:
+            w["print_mode"].setCurrentIndex(mode_idx)
+        glyph = s.print_glyph_px()
+        w["print_glyph_px"].setValue(glyph)
+        w["glyph_hint"].setText(mm_hint(glyph))
+        w["print_line_gap"].setValue(s.print_line_gap_px())
+        font_idx = w["print_font"].findData(s.print_font())
+        if font_idx >= 0:
+            w["print_font"].setCurrentIndex(font_idx)
+        w["print_char_w"].setValue(s.print_char_width())
+        w["print_char_h"].setValue(s.print_char_height())
+        w["print_bold"].setCurrentText("on" if s.print_bold() else "off")
+        stored_cols = s.print_columns()
+        cols_key = "auto" if stored_cols is None else str(stored_cols)
+        cols_idx = w["print_columns"].findData(cols_key)
+        if cols_idx >= 0:
+            w["print_columns"].setCurrentIndex(cols_idx)
+        elif stored_cols is not None:
+            w["print_columns"].addItem(f"{stored_cols} columns", str(stored_cols))
+            w["print_columns"].setCurrentIndex(w["print_columns"].count() - 1)
+        spacing = s.print_line_spacing_dots()
+        w["print_spacing"].setValue(0 if spacing is None else spacing)
+        w["print_lead_in"].setValue(s.print_lead_in())
+        w["print_tear_feed"].setValue(s.print_tear_feed())
+        sync = getattr(self, "_sync_format_mode_widgets", None)
+        if callable(sync):
+            sync()
+        self._refresh_print_profile_combo()
+
+    def _apply_selected_print_profile(self) -> None:
+        profile_id = str(self._format_widgets["profile"].currentData() or "").strip()
+        if not profile_id:
+            self._flash("Select a profile first.")
+            return
+        try:
+            self.session.settings.apply_print_profile(profile_id)
+        except ValueError as exc:
+            self._flash(str(exc))
+            return
+        self._reload_format_widgets_from_settings()
+        self.session.rebuild_printer()
+        label = self._format_widgets["profile"].currentText()
+        self._flash(f"Profile applied: {label}")
+
+    def _save_as_print_profile(self) -> None:
+        current_id = str(self._format_widgets["profile"].currentData() or "").strip()
+        current = self.session.settings.get_print_profile(current_id)
+        suggest = ""
+        if current is not None and not getattr(current, "builtin", True):
+            suggest = current.label
+        name, ok = QInputDialog.getText(
+            self,
+            "Save print profile",
+            "Profile name:",
+            text=suggest,
+        )
+        if not ok:
+            return
+        self._save_format_settings(quiet=True)
+        try:
+            saved = self.session.settings.save_user_print_profile(name)
+        except ValueError as exc:
+            QMessageBox.warning(self, "Save profile", str(exc))
+            return
+        self._refresh_print_profile_combo()
+        self._flash(f"Profile saved: {saved}")
+
+    def _delete_selected_print_profile(self) -> None:
+        profile_id = str(self._format_widgets["profile"].currentData() or "").strip()
+        profile = self.session.settings.get_print_profile(profile_id)
+        if profile is None or getattr(profile, "builtin", True):
+            self._flash("Built-in profiles cannot be deleted.")
+            return
+        reply = QMessageBox.question(
+            self,
+            "Delete profile",
+            f'Delete user profile "{profile.label}"?',
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+            QMessageBox.StandardButton.No,
+        )
+        if reply != QMessageBox.StandardButton.Yes:
+            return
+        try:
+            self.session.settings.delete_user_print_profile(profile.id)
+        except ValueError as exc:
+            self._flash(str(exc))
+            return
+        self._refresh_print_profile_combo()
+        self._flash(f"Deleted profile: {profile.label}")
+
     def _save_format_settings(self, *, quiet: bool = False) -> None:
         w = self._format_widgets
         printer_label = w["printer"].currentText().strip() or "console (log only)"
@@ -1549,37 +1767,11 @@ class AcarsBridgeApp(QMainWindow):
         self._test_print()
 
     def _reset_format_defaults(self) -> None:
-        """Restore Format controls to shipping defaults (printer destination kept)."""
-        from acars_bridge.printing.bitmap_render import mm_hint
-
-        w = self._format_widgets
-        width_idx = w["width"].findData("80")
-        if width_idx >= 0:
-            w["width"].setCurrentIndex(width_idx)
-        w["cut"].setCurrentText("on")
-        mode_idx = w["print_mode"].findData("bitmap")
-        if mode_idx >= 0:
-            w["print_mode"].setCurrentIndex(mode_idx)
-        w["print_glyph_px"].setValue(28)
-        w["glyph_hint"].setText(mm_hint(28))
-        w["print_line_gap"].setValue(2)
-        font_idx = w["print_font"].findData("a")
-        if font_idx >= 0:
-            w["print_font"].setCurrentIndex(font_idx)
-        w["print_char_w"].setValue(1)
-        w["print_char_h"].setValue(1)
-        w["print_bold"].setCurrentText("off")
-        cols_idx = w["print_columns"].findData("auto")
-        if cols_idx >= 0:
-            w["print_columns"].setCurrentIndex(cols_idx)
-        w["print_spacing"].setValue(0)
-        w["print_lead_in"].setValue(2)
-        w["print_tear_feed"].setValue(6)
-        sync = getattr(self, "_sync_format_mode_widgets", None)
-        if callable(sync):
-            sync()
-        self._save_format_settings(quiet=True)
-        self._flash("Format reset to defaults (printer unchanged).")
+        """Apply POS-80 default profile (printer destination kept)."""
+        self.session.settings.apply_print_profile("pos80_default")
+        self._reload_format_widgets_from_settings()
+        self.session.rebuild_printer()
+        self._flash("Format reset to POS-80 default (printer unchanged).")
 
     def _save_settings(self) -> None:
         w = self._settings_widgets
@@ -1616,6 +1808,11 @@ class AcarsBridgeApp(QMainWindow):
         )
         self.session.settings.set_simbrief_ofp_tickets(
             [key for key, box in w["ofp_tickets"].items() if box.isChecked()]
+        )
+        self.session.settings.set_wx_auto_enabled(w["wx_auto_enabled"].isChecked())
+        self.session.settings.set_wx_auto_nm(int(w["wx_auto_nm"].value()))
+        self.session.settings.set_wx_auto_kinds(
+            [key for key, box in w["wx_auto_kinds"].items() if box.isChecked()]
         )
         grace_min = int(w["simbrief_grace"].value())
         self.session.settings.set_simbrief_post_landing_grace_seconds(grace_min * 60)
@@ -1734,6 +1931,15 @@ class AcarsBridgeApp(QMainWindow):
             if watcher.needs_network_poll() and not self._simbrief_poll_busy:
                 self._simbrief_poll_busy = True
                 self._simbrief_pool.submit(self._simbrief_poll_worker)
+            plan = getattr(getattr(watcher, "state", None), "plan", None)
+            if (
+                plan is not None
+                and snap is not None
+                and self.session.settings.wx_auto_enabled()
+                and not self._auto_wx_busy
+            ):
+                self._auto_wx_busy = True
+                self._simbrief_pool.submit(self._auto_wx_worker, snap, plan)
         except Exception as exc:  # noqa: BLE001
             self.debug.info("simbrief_tick_error", error=str(exc))
         self._apply_ofp_chip(watcher)
@@ -1747,6 +1953,23 @@ class AcarsBridgeApp(QMainWindow):
         finally:
             self._simbrief_poll_busy = False
             QTimer.singleShot(0, self._refresh_ofp_chip)
+
+    def _auto_wx_worker(self, snap: object, plan: object) -> None:
+        try:
+            from acars_bridge.simbrief.models import SimBriefFlightPlan
+            from acars_bridge.simconnect.monitor import SimSnapshot
+
+            if not isinstance(snap, SimSnapshot) or not isinstance(plan, SimBriefFlightPlan):
+                return
+            svc = self.session.ensure_auto_wx()
+            printed = svc.consider(snap, plan)
+            if printed:
+                self.debug.info("auto_wx_printed", count=printed, ofp_id=plan.ofp_id)
+                QTimer.singleShot(0, self._reload_messages)
+        except Exception as exc:  # noqa: BLE001
+            self.debug.info("auto_wx_error", error=str(exc))
+        finally:
+            self._auto_wx_busy = False
 
     def _apply_ofp_chip(self, watcher: object) -> None:
         self.simbrief_chip.setText(f"OFP {watcher.chip_text()}")  # type: ignore[attr-defined]

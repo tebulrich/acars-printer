@@ -21,6 +21,7 @@ from acars_bridge.services.sterile import SterileGate, SterileThresholds
 from acars_bridge.simbrief.client import SimBriefClient
 from acars_bridge.simbrief.watcher import SimBriefWatcher, WatcherConfig
 from acars_bridge.simconnect.monitor import SimConnectMonitor, create_simconnect_monitor
+from acars_bridge.weather.auto_wx import AutoWxService
 
 
 def _sterile_from_settings(settings: SettingsStore) -> SterileGate:
@@ -45,6 +46,7 @@ class AppSession:
     sterile: SterileGate = field(default_factory=SterileGate)
     simconnect: SimConnectMonitor = field(default_factory=create_simconnect_monitor)
     simbrief_watcher: SimBriefWatcher | None = None
+    auto_wx: AutoWxService | None = None
 
     def transport(self):
         return self.observer
@@ -72,6 +74,17 @@ class AppSession:
         )
         if self.simbrief_watcher is not None:
             self.simbrief_watcher.print_manager = self.print_manager
+        if self.auto_wx is not None:
+            self.auto_wx.print_manager = self.print_manager
+
+    def ensure_auto_wx(self) -> AutoWxService:
+        if self.auto_wx is None:
+            self.auto_wx = AutoWxService(
+                settings=self.settings,
+                print_manager=self.print_manager,
+                sterile=self.sterile,
+            )
+        return self.auto_wx
 
     def apply_sterile_settings(self) -> None:
         self.sterile.set_thresholds(

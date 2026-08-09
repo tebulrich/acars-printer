@@ -18,6 +18,8 @@ class SimSnapshot:
     on_ground: bool = True
     ground_velocity_kt: float = 0.0
     alt_agl_ft: float = 0.0
+    latitude: float | None = None
+    longitude: float | None = None
     zulu_year: int | None = None
     zulu_month: int | None = None
     zulu_day: int | None = None
@@ -311,6 +313,8 @@ class WindowsSimConnectMonitor:
                             on_ground=snap.on_ground,
                             ground_velocity_kt=snap.ground_velocity_kt,
                             alt_agl_ft=snap.alt_agl_ft,
+                            latitude=snap.latitude,
+                            longitude=snap.longitude,
                             zulu_year=snap.zulu_year,
                             zulu_month=snap.zulu_month,
                             zulu_day=snap.zulu_day,

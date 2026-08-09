@@ -10,11 +10,17 @@ Status: **implemented** (randomizer removed; #3 + #5 + #7 Phase A).
 
 ## Out of scope (later)
 
-- #4 POS / thermal printer profiles
 - #7 Phase B/C (Win32 printer PWR/ERR/paper status, HID/bezel LEDs)
-- Auto destination ATIS/METAR/WX
 - Per-type different printers
 - Fenix ACARS tap
+
+## Related (implemented separately)
+
+- **Auto destination ATIS/METAR/WX** — Print tab; SimConnect lat/lon + SimBrief dest;
+  real VATSIM ATIS + aviationweather.gov; once per OFP when airborne inside NM ring
+  and sterile/power clear (short hops included).
+- **#4 POS / thermal printer profiles** — Format tab; built-in POS-80 / POS-58 /
+  compact presets + user Save as / Apply / Delete; knobs only (single printer URI).
 
 ---
 

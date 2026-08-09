@@ -75,9 +75,9 @@ Tabs (no scrolling settings pages — each tab is a short page):
 
 | Tab | What to set |
 | --- | --- |
-| **Format** | Printer, paper width/cut, strip look. Use **Save and test print**. |
+| **Format** | Printer, paper width/cut, strip look. Named profiles (POS-80 / POS-58 presets + Save as). Use **Save and test print**. |
 | **Network** | Hoppie / SayIntentions / PMDG GFO, optional callsign filter, registration. |
-| **Print** | Which ACARS types and SimBrief OFP sections may auto-print. |
+| **Print** | Which ACARS types and SimBrief OFP sections may auto-print, plus optional auto destination WX. |
 | **Hotkeys** | Enable + bindings (defaults Ctrl+Shift+R/A/T/F; clear to unbind). Also on the tray. |
 | **Settings** | Auto-print, auto-connect, updates, sterile until, only when powered, SimBrief user/grace, Print OFP / Unlock. |
 
@@ -153,6 +153,18 @@ settings so final / missed-final logic can continue.
 
 Requires a SimBrief username or numeric pilot ID. SimConnect DLLs ship under
 `third_party/SimConnect` for MSFS sterile timing and the SIM clock chip.
+
+## Auto destination WX
+
+Optional (Print tab). When enabled, once per locked SimBrief OFP the app prints
+real destination weather when you are airborne inside a user-chosen NM ring of
+the destination (default 150 NM) and the sterile/power gate allows printing.
+Short hops that start already inside the ring still print once after liftoff —
+not while sitting near origin on the ground.
+
+Sources: VATSIM public ATIS (when ATIS is checked) and
+[aviationweather.gov](https://aviationweather.gov/) METAR/TAF. Own toggles —
+does not require the ACARS Info/ATIS-METAR mute checkbox. No invented weather.
 
 ## Requirements
 
