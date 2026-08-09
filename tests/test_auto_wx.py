@@ -187,7 +187,11 @@ def test_auto_wx_prints_once_per_ofp(app_session, sample_plan: SimBriefFlightPla
     assert printed >= 1
     printer = app_session.print_manager._printer
     assert len(printer.printed) >= 1
-    assert "EDDM" in printer.printed[0][1]
+    text = printer.printed[0][1]
+    assert "EDDM" in text
+    assert text.startswith("ACARS START")
+    assert "ACARS END" in text
+    assert sample_plan.callsign in text.splitlines()[2]
     # Second consider — no duplicate
     n = len(printer.printed)
     assert svc.consider(snap, sample_plan) == 0
@@ -236,7 +240,10 @@ def test_auto_wx_short_hop_waits_for_airborne_then_prints_once(
     assert svc.consider(air, sample_plan) >= 1
     printer = app_session.print_manager._printer
     assert len(printer.printed) >= 1
-    assert "EDDM" in printer.printed[0][1]
+    text = printer.printed[0][1]
+    assert "EDDM" in text
+    assert text.startswith("ACARS START")
+    assert sample_plan.callsign in text.splitlines()[2]
     n = len(printer.printed)
     assert svc.consider(air, sample_plan) == 0
     assert len(printer.printed) == n
@@ -252,3 +259,16 @@ def test_wx_settings_roundtrip(app_session) -> None:
     assert s.wx_auto_enabled() is True
     assert s.wx_auto_nm() == 100
     assert s.wx_auto_kinds() == {"atis", "metar"}
+
+
+def test_as_inforeq_payload_prefixes_and_skips_existing() -> None:
+    from acars_bridge.weather.auto_wx import _as_inforeq_payload
+
+    assert _as_inforeq_payload(
+        "auto_atis", "EDDM", "INFO M\nRWY 26L"
+    ) == "VATATIS EDDM_A\nINFO M\nRWY 26L"
+    assert _as_inforeq_payload(
+        "auto_metar", "EDDM", "EDDM 091020Z 27008KT CAVOK"
+    ) == "METAR EDDM\nEDDM 091020Z 27008KT CAVOK"
+    already = "VATATIS EDDM_A\nINFO M"
+    assert _as_inforeq_payload("auto_atis", "EDDM", already) == already

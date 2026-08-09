@@ -1,12 +1,17 @@
 from __future__ import annotations
 
 import logging
+from dataclasses import replace
+from datetime import UTC, datetime
 from typing import TYPE_CHECKING
 
 import httpx
 
 from acars_bridge.hoppie.requests import AtisSide, normalize_icao
 from acars_bridge.hoppie.vatsim_atis import fetch_vatsim_atis
+from acars_bridge.models.messages import StoredMessage
+from acars_bridge.printing.base import PrinterSettings
+from acars_bridge.printing.formatter import ThermalMessageFormatter
 from acars_bridge.weather.awc import fetch_airport_coords, fetch_metar_raw, fetch_taf_raw
 from acars_bridge.weather.distance import great_circle_nm
 
@@ -18,6 +23,12 @@ if TYPE_CHECKING:
     from acars_bridge.simconnect.monitor import SimSnapshot
 
 log = logging.getLogger(__name__)
+
+_INFOREQ_PREFIX = {
+    "auto_atis": "VATATIS {icao}_A",
+    "auto_metar": "METAR {icao}",
+    "auto_taf": "TAF {icao}",
+}
 
 
 def should_trigger_dest_wx(
@@ -161,12 +172,24 @@ class AutoWxService:
         plan: SimBriefFlightPlan,
         bodies: list[tuple[str, str]],
     ) -> int:
-        settings = self.settings.as_printer_settings()
+        settings = self._printer_settings_for(plan)
         callsign = plan.callsign if plan.callsign and plan.callsign != "N/A" else "WX"
+        try:
+            dest = normalize_icao(plan.dest_icao)
+        except ValueError:
+            dest = (plan.dest_icao or "XXXX").strip().upper() or "XXXX"
+        formatter = ThermalMessageFormatter()
+        when = datetime.now(UTC)
         count = 0
         for ticket_type, body in bodies:
+            payload = _as_inforeq_payload(ticket_type, dest, body)
+            text = formatter.format(
+                _synthetic_inforeq(callsign, payload, when),
+                settings,
+                now=when,
+            )
             self.print_manager.print_ticket(
-                body,
+                text,
                 settings,
                 callsign=callsign,
                 ticket_type=ticket_type,
@@ -174,3 +197,49 @@ class AutoWxService:
             )
             count += 1
         return count
+
+    def _printer_settings_for(self, plan: SimBriefFlightPlan) -> PrinterSettings:
+        """Prefer Settings registration; fall back to SimBrief OFP tail."""
+        settings = self.settings.as_printer_settings()
+        if (settings.aircraft_registration or "").strip():
+            return settings
+        plan_reg = (plan.aircraft_reg or "").strip().upper()
+        if not plan_reg or plan_reg == "N/A":
+            return settings
+        return replace(settings, aircraft_registration=plan_reg)
+
+
+def _as_inforeq_payload(ticket_type: str, icao: str, body: str) -> str:
+    """Prefix auto WX text so ThermalMessageFormatter matches Hoppie inforeq strips."""
+    text = (body or "").strip()
+    template = _INFOREQ_PREFIX.get(ticket_type)
+    if not template:
+        return text
+    first = text.split("\n", 1)[0].strip().upper()
+    if first.startswith(("VATATIS", "METAR", "TAF", "SHORTTAF", "SHORTFAF", "ATIS")):
+        return text
+    return f"{template.format(icao=icao)}\n{text}"
+
+
+def _synthetic_inforeq(
+    callsign: str,
+    payload: str,
+    when: datetime,
+) -> StoredMessage:
+    return StoredMessage(
+        id=0,
+        fingerprint="auto-wx",
+        direction="in",
+        callsign=callsign,
+        sender="AUTO-WX",
+        recipient=callsign,
+        to_station=None,
+        message_type="inforeq",
+        raw_payload=payload,
+        normalized_body=payload,
+        min=None,
+        mrn=None,
+        ra=None,
+        send_status=None,
+        received_at=when.isoformat(),
+    )
