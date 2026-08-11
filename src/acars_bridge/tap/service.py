@@ -24,6 +24,7 @@ class TapStatus:
     running: bool = False
     last_check: datetime | None = None
     last_error: str | None = None
+    last_note: str | None = None
     last_stats: dict[str, int] = field(default_factory=dict)
     exchanges: int = 0
     sniffer_hits: int = 0
@@ -114,7 +115,8 @@ class TapService:
                 self.status.network_id = profile.id.value
                 self.status.network_label = profile.label
                 self.status.https_enabled = https_ok
-                self.status.last_error = proxy_note
+                self.status.last_error = None
+                self.status.last_note = proxy_note
                 self.status.last_check = datetime.now(UTC)
             except Exception as exc:  # noqa: BLE001
                 self._cleanup_unlocked()
@@ -176,6 +178,7 @@ class TapService:
             self.status.running = False
             self.status.last_check = datetime.now(UTC)
             self.status.last_error = None
+            self.status.last_note = None
         self._emit()
 
     def check_now(self) -> None:
@@ -212,6 +215,15 @@ class TapService:
     def _on_exchange(self, form: dict[str, str], response_text: str) -> None:
         callsign = self._session.settings.callsign() or None
         profile = self._session.settings.network_profile()
+        if profile.wire_format is not WireFormat.GFO:
+            logon = (form.get("logon") or "").strip()
+            from_cs = (form.get("from") or "").strip().upper()
+            if logon and from_cs:
+                self._session.wire_session.update(
+                    logon=logon,
+                    from_cs=from_cs,
+                    network_id=profile.id.value,
+                )
         if profile.wire_format is WireFormat.GFO:
             messages, force_print = messages_from_gfo_exchange(
                 request_path=form.get("path") or "",
@@ -294,6 +306,10 @@ class TapService:
                 pass
             self._hosts_owned = False
             _flush_dns()
+        try:
+            self._session.wire_session.clear()
+        except Exception:  # noqa: BLE001
+            pass
 
     def _atexit_cleanup(self) -> None:
         try:

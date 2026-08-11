@@ -18,6 +18,7 @@ from acars_bridge.services.ingestion import MessageIngestionService
 from acars_bridge.services.outbound import OutboundMessageService
 from acars_bridge.services.print_manager import PrintManager
 from acars_bridge.services.sterile import SterileGate, SterileThresholds
+from acars_bridge.services.wire_session import WireSessionVault
 from acars_bridge.simbrief.client import SimBriefClient
 from acars_bridge.simbrief.watcher import SimBriefWatcher, WatcherConfig
 from acars_bridge.simconnect.monitor import SimConnectMonitor, create_simconnect_monitor
@@ -47,6 +48,7 @@ class AppSession:
     simconnect: SimConnectMonitor = field(default_factory=create_simconnect_monitor)
     simbrief_watcher: SimBriefWatcher | None = None
     auto_wx: AutoWxService | None = None
+    wire_session: WireSessionVault = field(default_factory=WireSessionVault)
 
     def transport(self):
         return self.observer
@@ -72,6 +74,7 @@ class AppSession:
         self.outbound = OutboundMessageService(
             self.station, self.messages, self.settings, self.ingestion
         )
+        self.outbound.attach_session(self)
         if self.simbrief_watcher is not None:
             self.simbrief_watcher.print_manager = self.print_manager
         if self.auto_wx is not None:
@@ -168,5 +171,6 @@ def build_session(
         sterile=sterile,
         simconnect=simconnect,
     )
+    outbound.attach_session(session)
     session.ensure_simbrief_watcher()
     return session

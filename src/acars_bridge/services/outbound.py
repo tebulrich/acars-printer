@@ -38,12 +38,17 @@ class OutboundMessageService:
         self._repo = repo
         self._settings = settings
         self._ingestion = ingestion
+        self._session = None
         self.last_print_stats: dict[str, int] = {
             "stored": 0,
             "printed": 0,
             "duplicates": 0,
             "failed_prints": 0,
         }
+
+    def attach_session(self, session: object) -> None:
+        """Bind AppSession so callsign can auto-follow SimBrief / inbox."""
+        self._session = session
 
     def send_telex(self, to: str, text: str) -> StoredMessage:
         logon, callsign = self._require_credentials()
@@ -332,14 +337,42 @@ class OutboundMessageService:
         return [outbound, *inbounds], unavailable, print_stats
 
     def _require_credentials(self, *, allow_observer: bool = False) -> tuple[str, str]:
-        del allow_observer  # Print-bridge never sends; signature kept for call sites.
-        logon = self._settings.hoppie_logon()
-        callsign = self._settings.callsign()
-        if not logon or not callsign:
-            raise HoppieError("Configure hoppie logon and callsign first.")
+        from acars_bridge.services.station_identity import resolve_station_identity
+
+        del allow_observer
+        # Station mode: PC owns the callsign (settings logon + resolved callsign).
+        if self._settings.companion_station_enabled():
+            logon = self._settings.hoppie_logon()
+            identity = (
+                resolve_station_identity(self._session)
+                if self._session is not None
+                else None
+            )
+            callsign = identity.callsign if identity is not None else self._settings.callsign()
+            if not logon:
+                raise HoppieError(
+                    "Set your Hoppie logon code under Network (needed for station mode)."
+                )
+            if not callsign:
+                raise HoppieError(
+                    "No callsign yet — load a SimBrief OFP, print/tap one ACARS "
+                    "message, or set the Network callsign filter."
+                )
+            return logon, callsign
+
+        # Connect/tap MITM: reuse the aircraft’s live wire credentials (no poll).
+        wire = None
+        if self._session is not None:
+            wire = self._session.wire_session.get()
+        if wire is not None:
+            return wire.logon, wire.from_cs
+
         raise SendNotAllowedError(
-            "This app is Observer-only: it peeks and prints. "
-            "Send weather / telex / CPDLC from the aircraft client."
+            "No Hoppie/SayIntentions session seen yet. Fenix (and similar) "
+            "ATIS/weather stay on the aircraft’s own network — Connect cannot "
+            "reuse them. Send a Hoppie/SI ACARS message from a supported "
+            "client, or enable Companion station mode under Network when the "
+            "aircraft is not logged into Hoppie."
         )
 
     def _ensure_ok(self, raw: str) -> None:

@@ -63,8 +63,8 @@ already knows about.
 1. Get the latest Windows build from
    [Releases](https://github.com/tebulrich/acars-printer/releases)
    (`ACARS-Print-Bridge-*-windows-x64.exe`).
-2. Run it. Accept the **Administrator / UAC** prompt. Without elevation Connect
-   will fail.
+2. Run it. Windows will ask for **Administrator** (UAC) when the app starts —
+   accept that prompt. Without elevation Connect cannot intercept ACARS traffic.
 
 Close other copies of the app first. Only one instance should run. Closing the
 window fully quits the app.
@@ -79,13 +79,37 @@ Tabs (no scrolling settings pages — each tab is a short page):
 | **Network** | Hoppie / SayIntentions / PMDG GFO, optional callsign filter, registration. |
 | **Print** | Which ACARS types and SimBrief OFP sections may auto-print, plus optional auto destination WX. |
 | **Hotkeys** | Enable + bindings (defaults Ctrl+Shift+R/A/T/F; clear to unbind). Also on the tray. |
-| **Settings** | Auto-print, auto-connect, updates, sterile until, only when powered, SimBrief user/grace, Print OFP / Unlock. |
+| **Settings** | Auto-print, auto-connect, updates, sterile until, only when powered, SimBrief user/grace, Print OFP / Unlock, **Phone companion**. |
 
 Click **Save settings** on Network / Print / Hotkeys / Settings after changes.
 
 Click **Save settings**. Put the logon / API key and flight callsign in the
 **aircraft** ACARS pages. The plane's client must send the requests; this
 app only watches and prints.
+
+### Phone companion (optional)
+
+Open a page on your phone (same Wi‑Fi) to read the ACARS inbox. Optionally let
+the phone request weather / ATIS / telex / PDC when the aircraft cannot.
+
+1. Settings → **Phone companion** → **Let my phone show the message inbox** →
+   **Save settings**.
+2. Copy the phone URL (includes a PIN) or use **Open in browser**. Allow Windows
+   Firewall for the app on first run.
+3. On your phone: **Inbox**, **WX / ATIS**, **Telex**, **PDC**.
+
+Phone sends work in two ways:
+
+- **Connect/tap active:** after one **Hoppie / SayIntentions** ACARS exchange
+  the phone reuses the plane’s live session (no station mode). Fenix ATIS and
+  other in-aircraft weather do not count — that traffic never hits Hoppie.
+- **Offline (no MSFS owning the callsign):** turn on **Network → Companion
+  station mode** and save a Hoppie logon once. Callsign auto-follows SimBrief
+  or the last ACARS message when the Network filter is empty.
+
+Do not enable station mode while the aircraft already holds the callsign on
+Hoppie — Connect will conflict.
+Rotate the PIN anytime with **Rotate PIN**; open the new URL after that.
 
 ### 5. Connect, then use the plane
 
@@ -177,6 +201,30 @@ does not require the ACARS Info/ATIS-METAR mute checkbox. No invented weather.
 
 ## Build the Windows exe yourself
 
+### Desktop UI (Tauri + React — preferred)
+
+Requires Node.js 20+, Rust (rustup), Python 3.12+, and `uv`.
+
+**Double-click** [`build_exe.bat`](build_exe.bat) in the repo root, or:
+
+```powershell
+uv sync --group dev
+npm install
+npm run build:exe
+```
+
+Output: `dist\ACARS-Print-Bridge.exe` (and NSIS installer when bundled).
+Set `ACARS_BRIDGE_PYTHON` to your `python.exe` if the sidecar cannot find the
+project `.venv`. Run elevated for Connect.
+
+Dev mode:
+
+```powershell
+npm run tauri -- dev
+```
+
+### Legacy PyInstaller (Qt UI)
+
 ```bat
 uv sync --group dev
 scripts\build_windows_exe.bat
@@ -190,6 +238,7 @@ Output: `dist\ACARS Print Bridge.exe` (run elevated).
 
 ```powershell
 uv run pytest
+npm test
 ```
 
 ## Notes

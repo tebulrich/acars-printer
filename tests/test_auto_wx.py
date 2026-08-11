@@ -261,6 +261,20 @@ def test_wx_settings_roundtrip(app_session) -> None:
     assert s.wx_auto_kinds() == {"atis", "metar"}
 
 
+def test_wx_auto_nm_migrates_legacy_factory_default(tmp_path) -> None:
+    from acars_bridge.config import AppPaths
+    from acars_bridge.services.session import build_session
+
+    session = build_session(AppPaths.for_testing(tmp_path), use_fake_printer=True)
+    session.settings.set("wx_auto_nm", "150")
+    session.close()
+
+    session2 = build_session(AppPaths.for_testing(tmp_path), use_fake_printer=True)
+    assert session2.settings.get("wx_auto_nm") == "180"
+    assert session2.settings.wx_auto_nm() == 180
+    session2.close()
+
+
 def test_as_inforeq_payload_prefixes_and_skips_existing() -> None:
     from acars_bridge.weather.auto_wx import _as_inforeq_payload
 

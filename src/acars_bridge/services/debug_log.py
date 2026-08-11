@@ -24,11 +24,13 @@ class DebugLog:
         max_lines: int = 800,
         max_file_bytes: int = 1_500_000,
         get_logon: Callable[[], str | None] | None = None,
+        get_extra_logons: Callable[[], list[str]] | None = None,
     ) -> None:
         self.path = path
         self._max_lines = max_lines
         self._max_file_bytes = max_file_bytes
         self._get_logon = get_logon
+        self._get_extra_logons = get_extra_logons
         self._lock = threading.Lock()
         self._lines: deque[str] = deque(maxlen=max_lines)
         self.path.parent.mkdir(parents=True, exist_ok=True)
@@ -77,13 +79,18 @@ class DebugLog:
         self.info("log_cleared")
 
     def _redact(self, text: str) -> str:
-        logon = None
+        logons: list[str | None] = []
         if self._get_logon is not None:
             try:
-                logon = self._get_logon()
+                logons.append(self._get_logon())
             except Exception:  # noqa: BLE001
-                logon = None
-        return redact(text, logon)
+                pass
+        if self._get_extra_logons is not None:
+            try:
+                logons.extend(self._get_extra_logons())
+            except Exception:  # noqa: BLE001
+                pass
+        return redact(text, *logons)
 
     def _write(self, level: str, event: str, fields: dict[str, Any]) -> None:
         stamp = datetime.now(UTC).strftime("%Y-%m-%dT%H:%M:%SZ")

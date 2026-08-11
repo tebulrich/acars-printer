@@ -21,6 +21,7 @@ class SettingsStore:
         self._db = db
         self._key_path = key_path
         self._fernet = Fernet(self._load_or_create_key())
+        self._migrate_wx_auto_nm_default()
 
     def _load_or_create_key(self) -> bytes:
         if self._key_path.exists():
@@ -74,6 +75,15 @@ class SettingsStore:
 
     def set_callsign(self, callsign: str) -> None:
         self.set("callsign", callsign.strip().upper())
+
+    def station_callsign(self) -> str | None:
+        """Last auto-resolved Hoppie “from” callsign (phone/station)."""
+        value = self.get("station_callsign")
+        return value.upper() if value else None
+
+    def set_station_callsign(self, callsign: str) -> None:
+        cleaned = callsign.strip().upper()
+        self.set("station_callsign", cleaned or None)
 
     def aircraft_registration(self) -> str | None:
         """Tail number for ACARS hardcopy header (e.g. D-AIXX)."""
@@ -712,6 +722,15 @@ class SettingsStore:
     WX_AUTO_KIND_CHOICES: tuple[str, ...] = ("atis", "metar", "taf")
     _WX_AUTO_KINDS_DEFAULT = "atis,metar,taf"
     _WX_AUTO_NM_DEFAULT = 180
+    # Previous factory default before 1.1.1 — migrate leftover installs once.
+    _WX_AUTO_NM_LEGACY_DEFAULTS = frozenset({"150"})
+
+    def _migrate_wx_auto_nm_default(self) -> None:
+        raw = self.get("wx_auto_nm")
+        if raw is None:
+            return
+        if str(raw).strip() in self._WX_AUTO_NM_LEGACY_DEFAULTS:
+            self.set("wx_auto_nm", str(self._WX_AUTO_NM_DEFAULT))
 
     def wx_auto_enabled(self) -> bool:
         return (self.get("wx_auto_enabled", "0") or "0") in {"1", "true", "yes", "on"}
@@ -755,3 +774,68 @@ class SettingsStore:
             }
         )
         self.set("wx_auto_kinds", ",".join(cleaned))
+
+    # --- Phone companion (LAN web UI) ---------------------------------------
+
+    def companion_enabled(self) -> bool:
+        return (self.get("companion_enabled", "0") or "0") in {"1", "true", "yes", "on"}
+
+    def set_companion_enabled(self, enabled: bool) -> None:
+        self.set("companion_enabled", "1" if enabled else "0")
+
+    def companion_station_enabled(self) -> bool:
+        return (self.get("companion_station_enabled", "0") or "0") in {
+            "1",
+            "true",
+            "yes",
+            "on",
+        }
+
+    def set_companion_station_enabled(self, enabled: bool) -> None:
+        self.set("companion_station_enabled", "1" if enabled else "0")
+
+    def companion_port(self) -> int:
+        raw = self.get("companion_port", "8765") or "8765"
+        try:
+            port = int(raw)
+        except ValueError:
+            return 8765
+        return port if 1024 <= port <= 65535 else 8765
+
+    def set_companion_port(self, port: int | str) -> None:
+        try:
+            value = int(port)
+        except (TypeError, ValueError):
+            value = 8765
+        if not 1024 <= value <= 65535:
+            value = 8765
+        self.set("companion_port", str(value))
+
+    def companion_token(self) -> str:
+        """PIN / bearer token for the phone UI (never the Hoppie logon)."""
+        existing = (self.get("companion_token") or "").strip()
+        if existing:
+            return existing
+        return self.ensure_companion_token()
+
+    def ensure_companion_token(self) -> str:
+        """Return existing PIN, or create one once."""
+        import secrets
+
+        existing = (self.get("companion_token") or "").strip()
+        if existing:
+            return existing
+        token = secrets.token_urlsafe(9)[:12]
+        self.set("companion_token", token)
+        return token
+
+    def set_companion_token(self, token: str) -> None:
+        cleaned = (token or "").strip()
+        if not cleaned:
+            self.ensure_companion_token()
+            return
+        self.set("companion_token", cleaned)
+
+    def rotate_companion_token(self) -> str:
+        self.set("companion_token", None)
+        return self.ensure_companion_token()

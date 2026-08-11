@@ -3,10 +3,11 @@ from __future__ import annotations
 import re
 
 
-def redact(text: str, logon: str | None = None) -> str:
+def redact(text: str, *logons: str | None) -> str:
     redacted = text
-    if logon:
-        redacted = redacted.replace(logon, "[REDACTED_LOGON]")
+    for logon in logons:
+        if logon:
+            redacted = redacted.replace(logon, "[REDACTED_LOGON]")
     redacted = re.sub(r"([?&]logon=)[^&\s]+", r"\1[REDACTED_LOGON]", redacted, flags=re.I)
     redacted = re.sub(
         r"\blogon[\"']?\s*[:=]\s*[\"']?[^\"'\s,&]+",

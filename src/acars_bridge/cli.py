@@ -28,7 +28,28 @@ def version() -> None:
 
 @app.command()
 def ui(data_dir: str | None = typer.Option(None, hidden=True)) -> None:
-    """Open the desktop UI (Qt / PySide6)."""
+    """Open the desktop UI (Tauri + React; falls back to Qt)."""
+    import os
+    import shutil
+    import subprocess
+
+    # Prefer the Tauri shell when available (npm run tauri / built exe).
+    root = Path(__file__).resolve().parents[2]
+    tauri_exe = root / "src-tauri" / "target" / "release" / "acars-print-bridge.exe"
+    npm = shutil.which("npm")
+    if tauri_exe.is_file():
+        env = os.environ.copy()
+        if data_dir:
+            env["ACARS_BRIDGE_DATA_DIR"] = data_dir
+        raise SystemExit(subprocess.call([str(tauri_exe)], env=env, cwd=str(root)))
+    if npm and (root / "package.json").is_file():
+        env = os.environ.copy()
+        if data_dir:
+            env["ACARS_BRIDGE_DATA_DIR"] = data_dir
+        raise SystemExit(
+            subprocess.call([npm, "run", "tauri", "--", "dev"], env=env, cwd=str(root))
+        )
+
     from acars_bridge.ui.app import run_app
 
     paths = AppPaths.for_testing(Path(data_dir)) if data_dir else None

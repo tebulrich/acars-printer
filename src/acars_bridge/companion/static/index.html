@@ -1,0 +1,171 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta
+      name="viewport"
+      content="width=device-width, initial-scale=1, viewport-fit=cover"
+    />
+    <meta name="theme-color" content="#e8edf3" />
+    <meta name="apple-mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-status-bar-style" content="default" />
+    <title>ACARS Companion</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;600&family=IBM+Plex+Sans:wght@400;500;600;700&display=swap"
+      rel="stylesheet"
+    />
+    <link rel="stylesheet" href="/app.css" />
+  </head>
+  <body>
+    <div id="app">
+      <header class="top">
+        <div class="brand">
+          <span class="mark">ACARS</span>
+          <span class="sub" id="callsign">—</span>
+        </div>
+        <div class="pills">
+          <span class="pill" id="stationPill">STN OFF</span>
+          <span class="pill muted" id="countPill">0 msg</span>
+        </div>
+      </header>
+
+      <p class="status-line" id="statusLine">Connecting…</p>
+
+      <nav class="tabs" role="tablist" aria-label="Companion sections">
+        <button type="button" class="tab active" data-view="inbox">Inbox</button>
+        <button type="button" class="tab" data-view="request">WX / ATIS</button>
+        <button type="button" class="tab" data-view="telex">Telex</button>
+        <button type="button" class="tab" data-view="pdc">PDC</button>
+      </nav>
+
+      <main>
+        <section id="view-inbox" class="view active">
+          <div class="toolbar">
+            <button type="button" class="ghost" id="btnRefresh">Refresh</button>
+            <button type="button" class="ghost" id="btnMore">Load older</button>
+          </div>
+          <ul id="messageList" class="msg-list"></ul>
+          <p class="empty" id="inboxEmpty">No messages yet.</p>
+        </section>
+
+        <section id="view-request" class="view">
+          <div class="card">
+            <h2>Weather &amp; ATIS</h2>
+            <p class="hint">
+              Hoppie <code>inforeq</code> packets (Magknight / Hoppie):
+              <code>metar ICAO</code>, <code>taf ICAO</code>,
+              <code>vatatis ICAO</code> / <code>_D_ATIS</code> /
+              <code>_A_ATIS</code>.
+            </p>
+            <label>
+              ICAO
+              <input
+                id="wxIcao"
+                maxlength="4"
+                placeholder="EDDF"
+                autocomplete="off"
+                autocapitalize="characters"
+                spellcheck="false"
+              />
+            </label>
+            <div class="btn-row">
+              <button type="button" class="primary" data-wx="metar">METAR</button>
+              <button type="button" class="primary" data-wx="taf">TAF</button>
+              <button type="button" class="primary" data-wx="shorttaf">Short TAF</button>
+            </div>
+            <label>
+              ATIS side
+              <select id="atisSide">
+                <option value="dep">Departure (_D_ATIS)</option>
+                <option value="arr">Arrival (_A_ATIS)</option>
+                <option value="plain">Combined (plain ICAO)</option>
+              </select>
+            </label>
+            <button type="button" class="accent" id="btnAtis">Request VATSIM ATIS</button>
+          </div>
+        </section>
+
+        <section id="view-telex" class="view">
+          <div class="card">
+            <h2>Send telex</h2>
+            <p class="hint">
+              Needs Companion station mode ON under Network on the desktop.
+              Leave that off if the aircraft already sends ACARS itself.
+            </p>
+            <label>
+              To
+              <input
+                id="telexTo"
+                placeholder="SWROPS / EDDF"
+                autocomplete="off"
+                autocapitalize="characters"
+                spellcheck="false"
+              />
+            </label>
+            <label>
+              Message
+              <textarea id="telexBody" rows="6" placeholder="Free text…"></textarea>
+            </label>
+            <button type="button" class="accent" id="btnTelex">Send telex</button>
+          </div>
+        </section>
+
+        <section id="view-pdc" class="view">
+          <div class="card">
+            <h2>Pre-departure clearance</h2>
+            <p class="hint">
+              Standard Hoppie PDC telex to the ATC facility (usually the airport
+              ICAO), same format as Magknight / FBW:
+            </p>
+            <pre class="sample">REQUEST PREDEP CLEARANCE
+CALLSIGN TYPE TO DEST
+AT DEP STAND GATE
+ATIS X</pre>
+            <div class="grid2">
+              <label>
+                ATC station
+                <input id="pdcStation" placeholder="EDDF" maxlength="8" autocapitalize="characters" />
+              </label>
+              <label>
+                Aircraft type
+                <input id="pdcType" placeholder="A339" maxlength="8" autocapitalize="characters" />
+              </label>
+              <label>
+                Departure
+                <input id="pdcDep" placeholder="EDDF" maxlength="4" autocapitalize="characters" />
+              </label>
+              <label>
+                Destination
+                <input id="pdcDest" placeholder="KJFK" maxlength="4" autocapitalize="characters" />
+              </label>
+              <label>
+                Stand
+                <input id="pdcStand" placeholder="A12" maxlength="8" autocapitalize="characters" />
+              </label>
+              <label>
+                ATIS letter
+                <input id="pdcAtis" placeholder="D" maxlength="1" autocapitalize="characters" />
+              </label>
+            </div>
+            <button type="button" class="accent" id="btnPdc">Request PDC</button>
+          </div>
+        </section>
+      </main>
+
+      <div id="detail" class="sheet hidden" aria-hidden="true">
+        <div class="sheet-panel">
+          <div class="sheet-head">
+            <strong id="detailTitle">Message</strong>
+            <button type="button" class="ghost" id="btnCloseDetail">Close</button>
+          </div>
+          <pre id="detailBody" class="mono"></pre>
+        </div>
+      </div>
+
+      <div id="toast" class="toast hidden" role="status"></div>
+    </div>
+    <script src="/app.js"></script>
+  </body>
+</html>

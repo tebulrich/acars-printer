@@ -158,6 +158,8 @@ class SterileGate:
             self._thresholds = thresholds
 
     def set_require_powered(self, enabled: bool) -> None:
+        flush_acars: list[PrintJob] = []
+        flush_simbrief: list[PrintJob] = []
         with self._lock:
             self._require_powered = bool(enabled)
             if enabled and self._battery_on is not True:
@@ -166,10 +168,19 @@ class SterileGate:
                 self._power_ready_at = None
                 self._blocking = True
             elif not enabled:
+                was_blocking = self._blocking
                 self._unpowered = False
                 self._settling = False
                 self._power_ready_at = None
                 self._blocking = self._sterile
+                if was_blocking and not self._blocking:
+                    flush_acars = self._acars_queue
+                    flush_simbrief = self._simbrief_queue
+                    self._acars_queue = []
+                    self._simbrief_queue = []
+        combined = flush_acars + flush_simbrief
+        for index, job in enumerate(combined):
+            self._dispatch_flush(job, delay=index * self._flush_stagger_seconds)
 
     def add_listener(self, callback: Callable[[bool], None]) -> None:
         self._listeners.append(callback)

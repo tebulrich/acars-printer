@@ -41,3 +41,14 @@ dist-release/
 dist-pwr*/
 build-pwr*/
 
+# Local planning notes (never commit)
+plans/
+
+# Node / Tauri
+node_modules/
+dist/
+dist-windows/
+src-tauri/target/
+web/dist/
+*.tsbuildinfo
+

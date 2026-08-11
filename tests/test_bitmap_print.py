@@ -78,3 +78,36 @@ def test_escpos_bitmap_writes_raster(tmp_path):
     # Raster / bit-image commands typically include GS v 0 (0x1d 0x76 0x30)
     # or ESC * — either proves we did not only send plain text.
     assert b"\x1dv0" in data or b"\x1d\x76\x30" in data or b"\x1b*" in data
+
+
+def test_escpos_bitmap_print_keeps_stdout_clean(tmp_path, capsys):
+    """python-escpos must not print() profile warnings onto bridge stdout."""
+    path = tmp_path / "bmp.bin"
+    settings = PrinterSettings(
+        destination=f"file://{path}",
+        paper_width="80",
+        render_mode="bitmap",
+        glyph_px=18,
+        cut_enabled=False,
+    )
+    msg = StoredMessage(
+        id=1,
+        fingerprint="x",
+        direction="in",
+        callsign="DLH4MC",
+        sender="EDDF_DEL",
+        recipient="DLH4MC",
+        to_station=None,
+        message_type="telex",
+        raw_payload="x",
+        normalized_body="TEST",
+        min=None,
+        mrn=None,
+        ra=None,
+        send_status=None,
+        received_at="2026-08-04T18:09:00+00:00",
+    )
+    EscPosMessagePrinter().print(msg, "ACARS START\nTEST\nACARS END\n", settings)
+    captured = capsys.readouterr()
+    assert "media.width.pixel" not in captured.out
+    assert "center flag" not in captured.out

@@ -141,8 +141,11 @@ class EscPosMessagePrinter:
             line_gap_px=settings.line_gap_px,
             bold=settings.bold,
         )
+        # python-escpos prints a stdout warning when media.width.pixels is
+        # "Unknown" (even with center=False). That breaks the Tauri NDJSON bridge.
+        EscPosMessagePrinter._ensure_media_width_pixels(printer, settings.paper_width)
         try:
-            printer.image(img)  # type: ignore[attr-defined]
+            printer.image(img, center=False)  # type: ignore[attr-defined]
         except TypeError:
             # Older python-escpos: path-only — write temp PNG.
             import tempfile
@@ -151,7 +154,32 @@ class EscPosMessagePrinter:
             with tempfile.TemporaryDirectory() as tmp:
                 path = Path(tmp) / "strip.png"
                 img.save(path)
-                printer.image(str(path))  # type: ignore[attr-defined]
+                try:
+                    printer.image(str(path), center=False)  # type: ignore[attr-defined]
+                except TypeError:
+                    printer.image(str(path))  # type: ignore[attr-defined]
+
+    @staticmethod
+    def _ensure_media_width_pixels(printer: object, paper_width: str) -> None:
+        """Set escpos profile pixel width so image() stays quiet on stdout."""
+        from acars_bridge.printing.bitmap_render import paper_dot_width
+
+        dots = int(paper_dot_width(paper_width))
+        profile = getattr(printer, "profile", None)
+        if profile is None:
+            return
+        data = getattr(profile, "profile_data", None)
+        if not isinstance(data, dict):
+            return
+        media = data.setdefault("media", {})
+        if not isinstance(media, dict):
+            return
+        width = media.setdefault("width", {})
+        if not isinstance(width, dict):
+            return
+        current = width.get("pixels")
+        if current in (None, "", "Unknown") or not str(current).isdigit():
+            width["pixels"] = dots
 
     @staticmethod
     def _feed_lines(printer: object, lines: int) -> None:

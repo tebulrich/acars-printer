@@ -62,7 +62,7 @@ def test_callsign_in_use(fixture_text):
 
 
 def test_session_outbound_is_disabled(tmp_path, fixture_text):
-    """Print-bridge never sends; aircraft client owns the callsign."""
+    """Default Observer/tap mode never sends; plane owns the callsign."""
     router = _Router({"telex": "ok", "inforeq": fixture_text("inforeq_metar.txt")})
     client = HoppieClient("https://example.test/connect.html", transport=router)
     session = build_session(AppPaths.for_testing(tmp_path), client=client, use_fake_printer=True)

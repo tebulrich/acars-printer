@@ -158,6 +158,48 @@ class MessageRepository:
             ).fetchall()
         return [StoredMessage.from_row(row) for row in rows]
 
+    def list_since(self, since_id: int = 0, *, limit: int = 200) -> list[StoredMessage]:
+        """Messages with id > since_id, oldest-first for inbox append."""
+        limit = max(1, min(int(limit), 500))
+        since_id = max(0, int(since_id))
+        with self._db.lock:
+            rows = self._db.conn.execute(
+                """
+                SELECT * FROM messages
+                WHERE id > ?
+                ORDER BY id ASC
+                LIMIT ?
+                """,
+                (since_id, limit),
+            ).fetchall()
+        return [StoredMessage.from_row(row) for row in rows]
+
+    def list_page(self, *, before_id: int | None = None, limit: int = 50) -> list[StoredMessage]:
+        """Page of messages newest-first; optional cursor ``before_id``."""
+        limit = max(1, min(int(limit), 200))
+        with self._db.lock:
+            if before_id is None:
+                rows = self._db.conn.execute(
+                    "SELECT * FROM messages ORDER BY id DESC LIMIT ?",
+                    (limit,),
+                ).fetchall()
+            else:
+                rows = self._db.conn.execute(
+                    """
+                    SELECT * FROM messages
+                    WHERE id < ?
+                    ORDER BY id DESC
+                    LIMIT ?
+                    """,
+                    (int(before_id), limit),
+                ).fetchall()
+        return [StoredMessage.from_row(row) for row in rows]
+
+    def count(self) -> int:
+        with self._db.lock:
+            row = self._db.conn.execute("SELECT COUNT(*) AS n FROM messages").fetchone()
+        return int(row["n"]) if row else 0
+
     def clear_all(self) -> None:
         """Drop message + print history (UI keeps only the current session)."""
         with self._db.lock:
