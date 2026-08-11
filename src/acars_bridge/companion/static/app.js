@@ -1,21 +1,14 @@
 (() => {
-  const params = new URLSearchParams(location.search);
-  const token = params.get("token") || localStorage.getItem("acars_companion_token") || "";
-  if (token) localStorage.setItem("acars_companion_token", token);
-
   const $ = (id) => document.getElementById(id);
   const listEl = $("messageList");
   const emptyEl = $("inboxEmpty");
   let oldestId = null;
   let newestId = 0;
   let busy = false;
+  let detailId = null;
 
   function headers() {
-    return {
-      Authorization: `Bearer ${token}`,
-      "Content-Type": "application/json",
-      "X-Companion-Token": token,
-    };
+    return { "Content-Type": "application/json" };
   }
 
   async function api(path, opts = {}) {
@@ -49,10 +42,17 @@
   function fmtTime(iso) {
     if (!iso) return "—";
     try {
-      const d = new Date(iso.endsWith("Z") || iso.includes("+") ? iso : `${iso}Z`);
-      return d.toISOString().slice(11, 16) + "Z";
+      const raw = String(iso).trim();
+      const hasZone = /(?:Z|[+-]\d{2}:?\d{2})$/i.test(raw);
+      const d = new Date(hasZone ? raw : `${raw}Z`);
+      if (Number.isNaN(d.getTime())) return raw;
+      const pad = (n) => String(n).padStart(2, "0");
+      return (
+        `${pad(d.getUTCDate())}.${pad(d.getUTCMonth() + 1)}.${d.getUTCFullYear()}` +
+        ` - ${pad(d.getUTCHours())}:${pad(d.getUTCMinutes())}:${pad(d.getUTCSeconds())}`
+      );
     } catch {
-      return iso.slice(11, 16) || iso;
+      return iso;
     }
   }
 
@@ -100,12 +100,49 @@
   async function openDetail(id) {
     try {
       const m = await api(`/api/messages/${id}`);
+      detailId = m.id;
       $("detailTitle").textContent = `${(m.message_type || "").toUpperCase()} · ${m.station || "—"}`;
       $("detailBody").textContent = m.normalized_body || "";
+      const replyRow = $("replyRow");
+      replyRow.innerHTML = "";
+      const choices = m.can_reply ? m.reply_choices || [] : [];
+      if (choices.length) {
+        replyRow.classList.remove("hidden");
+        for (const reply of choices) {
+          const btn = document.createElement("button");
+          btn.type = "button";
+          btn.className = reply === "WILCO" || reply === "ROGER" || reply === "AFFIRM"
+            ? "accent"
+            : "primary";
+          btn.textContent = reply;
+          btn.addEventListener("click", () => sendReply(reply));
+          replyRow.appendChild(btn);
+        }
+      } else {
+        replyRow.classList.add("hidden");
+      }
       $("detail").classList.remove("hidden");
       $("detail").setAttribute("aria-hidden", "false");
     } catch (e) {
       toast(e.message, true);
+    }
+  }
+
+  async function sendReply(reply) {
+    if (busy || !detailId) return;
+    setBusy(true);
+    try {
+      await api(`/api/messages/${detailId}/reply`, {
+        method: "POST",
+        body: JSON.stringify({ reply }),
+      });
+      toast(`${reply} sent`);
+      $("detail").classList.add("hidden");
+      await loadInbox({ reset: true });
+    } catch (e) {
+      toast(e.message, true);
+    } finally {
+      setBusy(false);
     }
   }
 
@@ -213,6 +250,22 @@
   $("btnCloseDetail").addEventListener("click", () => {
     $("detail").classList.add("hidden");
     $("detail").setAttribute("aria-hidden", "true");
+    detailId = null;
+  });
+  $("btnReprint").addEventListener("click", async () => {
+    if (busy || !detailId) return;
+    setBusy(true);
+    try {
+      const r = await api(`/api/messages/${detailId}/print`, {
+        method: "POST",
+        body: JSON.stringify({}),
+      });
+      toast(r.result === "deferred" ? "Print deferred" : "Printed");
+    } catch (e) {
+      toast(e.message, true);
+    } finally {
+      setBusy(false);
+    }
   });
   $("detail").addEventListener("click", (e) => {
     if (e.target === $("detail")) $("btnCloseDetail").click();
@@ -317,12 +370,6 @@
   });
 
   async function boot() {
-    if (!token) {
-      $("statusLine").textContent =
-        "Missing token. Open the link from the desktop Companion settings.";
-      toast("PIN / token missing in URL", true);
-      return;
-    }
     try {
       await refreshStatus();
       await loadInbox({ reset: true });

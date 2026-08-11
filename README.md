@@ -71,17 +71,15 @@ window fully quits the app.
 
 ### 4. Settings (do this once)
 
-Tabs (no scrolling settings pages — each tab is a short page):
+**Messages** is the flight screen. Everything else is under **Setup**:
 
-| Tab | What to set |
+| Setup block | What to set |
 | --- | --- |
-| **Format** | Printer, paper width/cut, strip look. Named profiles (POS-80 / POS-58 presets + Save as). Use **Save and test print**. |
-| **Network** | Hoppie / SayIntentions / PMDG GFO, optional callsign filter, registration. |
-| **Print** | Which ACARS types and SimBrief OFP sections may auto-print, plus optional auto destination WX. |
-| **Hotkeys** | Enable + bindings (defaults Ctrl+Shift+R/A/T/F; clear to unbind). Also on the tray. |
-| **Settings** | Auto-print, auto-connect, updates, sterile until, only when powered, SimBrief user/grace, Print OFP / Unlock, **Phone companion**. |
+| **Printer** | Destination, paper width/cut, strip look, named profiles. Use **Save and test print**. |
+| **Network** | Hoppie / SayIntentions / PMDG GFO, callsign filter, registration, phone companion, optional station mode. |
+| **When to print** | Which ACARS types and OFP sections auto-print, sterile/power gates, SimBrief, **Print OFP** / Unlock, hotkeys. |
 
-Click **Save settings** on Network / Print / Hotkeys / Settings after changes.
+Click **Save settings** after changes.
 
 Click **Save settings**. Put the logon / API key and flight callsign in the
 **aircraft** ACARS pages. The plane's client must send the requests; this
@@ -92,11 +90,12 @@ app only watches and prints.
 Open a page on your phone (same Wi‑Fi) to read the ACARS inbox. Optionally let
 the phone request weather / ATIS / telex / PDC when the aircraft cannot.
 
-1. Settings → **Phone companion** → **Let my phone show the message inbox** →
+1. Setup → Network → **Phone companion** → **Let my phone show the message inbox** →
    **Save settings**.
-2. Copy the phone URL (includes a PIN) or use **Open in browser**. Allow Windows
-   Firewall for the app on first run.
-3. On your phone: **Inbox**, **WX / ATIS**, **Telex**, **PDC**.
+2. Copy the phone URL or use **Open in browser**. Allow Windows
+   Firewall for the app on first run. The page is open on your LAN — no PIN.
+3. On your phone: **Inbox** (open a message to **Print** or send **WILCO**),
+   **WX / ATIS**, **Telex**, **PDC**.
 
 Phone sends work in two ways:
 
@@ -109,11 +108,12 @@ Phone sends work in two ways:
 
 Do not enable station mode while the aircraft already holds the callsign on
 Hoppie — Connect will conflict.
-Rotate the PIN anytime with **Rotate PIN**; open the new URL after that.
 
 ### 5. Connect, then use the plane
 
-1. Click **Connect**. You should get a short "Connected" toast.
+1. Click **Connect**. The header should say **Waiting for aircraft**, then
+   **Hoppie ok · your callsign** after the first exchange. A bad aircraft logon
+   shows **Hoppie rejected logon**.
 2. Leave this window running in the background.
 3. In the sim, use ACARS as usual (METAR, ATIS, CPDLC, company telex, etc.).
 4. Printed copies should appear on the printer; the Messages list shows what was

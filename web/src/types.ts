@@ -1,10 +1,4 @@
-export type AppView =
-  | "messages"
-  | "format"
-  | "network"
-  | "print"
-  | "hotkeys"
-  | "settings";
+export type AppView = "messages" | "setup";
 
 export interface Meta {
   version: string;

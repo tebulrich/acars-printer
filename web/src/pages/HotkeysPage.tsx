@@ -6,8 +6,7 @@ interface Props {
   onSave: () => void;
 }
 
-const inputClass =
-  "rounded border border-[var(--border)] bg-white px-2 py-1.5 text-sm outline-none focus:border-[var(--accent)]";
+const inputClass = "inp text-sm";
 
 const HOTKEY_LABELS: Record<string, string> = {
   reprint_last: "Reprint last message",
@@ -56,7 +55,7 @@ export function HotkeysPage({ settings, onChange, onSave }: Props) {
       </div>
       <button
         type="button"
-        className="mt-4 rounded bg-[var(--accent)] px-3 py-1.5 text-sm text-white hover:bg-[var(--accent-hover)]"
+        className="mt-4 rounded bg-[var(--accent)] px-3 py-1.5 text-sm text-[#12161c] hover:bg-[var(--accent-hover)]"
         onClick={onSave}
       >
         Save settings

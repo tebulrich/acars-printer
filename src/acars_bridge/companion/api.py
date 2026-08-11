@@ -6,13 +6,23 @@ import json
 from typing import TYPE_CHECKING, Any
 
 from acars_bridge.companion.lan import lan_ipv4_addresses, primary_lan_ip
+from acars_bridge.hoppie.cpdlc import reply_choices
 from acars_bridge.hoppie.errors import HoppieError, SendNotAllowedError
 from acars_bridge.hoppie.requests import AtisSide, AtisSource, WeatherKind
+from acars_bridge.hoppie.types import MessageType
 
 if TYPE_CHECKING:
     from acars_bridge.bridge.runtime import BridgeRuntime
     from acars_bridge.models.messages import StoredMessage
     from acars_bridge.services.companion_station import CompanionStationPoller
+
+
+def _can_reply(msg: StoredMessage) -> bool:
+    return (
+        msg.direction == "in"
+        and msg.message_type == MessageType.CPDLC.value
+        and bool(reply_choices(msg.ra))
+    )
 
 
 def _message_dict(msg: StoredMessage, *, body: bool = True) -> dict[str, Any]:
@@ -25,6 +35,10 @@ def _message_dict(msg: StoredMessage, *, body: bool = True) -> dict[str, Any]:
         "station": station or "",
         "message_type": msg.message_type,
         "preview": (msg.normalized_body or "").replace("\n", " ")[:80],
+        "ra": msg.ra or "",
+        "min": msg.min,
+        "can_reply": _can_reply(msg),
+        "reply_choices": reply_choices(msg.ra) if _can_reply(msg) else [],
     }
     if body:
         row["normalized_body"] = msg.normalized_body
@@ -54,7 +68,6 @@ class CompanionApi:
 
         s = self.session.settings
         port = s.companion_port()
-        token = s.companion_token()
         ip = primary_lan_ip()
         poller_err = self.poller.last_error if self.poller else None
         identity = resolve_station_identity(self.session)
@@ -84,7 +97,7 @@ class CompanionApi:
             "station_error": poller_err,
             "message_count": self.session.messages.count(),
             "lan_ips": lan_ipv4_addresses(),
-            "url": f"http://{ip}:{port}/?token={token}",
+            "url": f"http://{ip}:{port}/",
             "has_logon": bool(s.hoppie_logon()) or wire_ready,
             "has_callsign": bool(display_cs or identity.callsign),
             "wire_session": wire,
@@ -162,6 +175,18 @@ class CompanionApi:
             "messages": [_message_dict(m) for m in rows],
             "print_stats": dict(self.session.outbound.last_print_stats),
         }
+
+    def print_message(self, message_id: int) -> dict[str, Any]:
+        result = self.runtime.cmd_print_message({"message_id": message_id})
+        if not result.get("ok"):
+            raise HoppieError(str(result.get("error") or "Print failed"))
+        data = result.get("data") or {}
+        return {"ok": True, "result": data.get("result") or "printed"}
+
+    def reply_cpdlc(self, message_id: int, reply: str) -> dict[str, Any]:
+        stored = self.session.outbound.reply_cpdlc(message_id, reply)
+        self.runtime.emit_event("new_messages", {"count": 1})
+        return {"ok": True, "message": _message_dict(stored)}
 
     def request_pdc(self, body: dict[str, Any]) -> dict[str, Any]:
         stored = self.session.outbound.request_pdc(

@@ -6,9 +6,9 @@
       name="viewport"
       content="width=device-width, initial-scale=1, viewport-fit=cover"
     />
-    <meta name="theme-color" content="#e8edf3" />
+    <meta name="theme-color" content="#12161c" />
     <meta name="apple-mobile-web-app-capable" content="yes" />
-    <meta name="apple-mobile-web-app-status-bar-style" content="default" />
+    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
     <title>ACARS Companion</title>
     <link rel="preconnect" href="https://fonts.googleapis.com" />
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
@@ -161,6 +161,10 @@ ATIS X</pre>
             <button type="button" class="ghost" id="btnCloseDetail">Close</button>
           </div>
           <pre id="detailBody" class="mono"></pre>
+          <div id="detailActions" class="detail-actions">
+            <button type="button" class="primary" id="btnReprint">Print</button>
+            <div id="replyRow" class="reply-row hidden"></div>
+          </div>
         </div>
       </div>
 

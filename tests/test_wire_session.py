@@ -126,6 +126,28 @@ def test_tap_exchange_updates_wire_vault(tmp_path):
     assert creds is not None
     assert creds.logon == "plane-secret"
     assert creds.from_cs == "SWR99"
+    assert tap.status.last_hoppie_error is None
+
+    tap._on_exchange(
+        {
+            "logon": "plane-secret",
+            "from": "SWR99",
+            "type": "poll",
+        },
+        "error {invalid logon code}",
+    )
+    assert tap.status.last_hoppie_error is not None
+    assert "invalid logon" in tap.status.last_hoppie_error.lower()
+
+    tap._on_exchange(
+        {
+            "logon": "plane-secret",
+            "from": "SWR99",
+            "type": "poll",
+        },
+        "ok",
+    )
+    assert tap.status.last_hoppie_error is None
     tap.stop()
     assert session.wire_session.get() is None
     session.close()

@@ -115,7 +115,7 @@ export function PrintPage({ settings, onChange, onSave }: Props) {
             type="number"
             min={10}
             max={500}
-            className="rounded border border-[var(--border)] bg-white px-2 py-1.5 text-sm"
+            className="rounded border border-[var(--border)] bg-[var(--btn)] px-2 py-1.5 text-sm"
             value={settings.wx_auto_nm}
             placeholder="180"
             onChange={(e) => onChange({ wx_auto_nm: Number(e.target.value) })}
@@ -148,7 +148,7 @@ export function PrintPage({ settings, onChange, onSave }: Props) {
 
       <button
         type="button"
-        className="rounded bg-[var(--accent)] px-3 py-1.5 text-sm text-white hover:bg-[var(--accent-hover)]"
+        className="rounded bg-[var(--accent)] px-3 py-1.5 text-sm text-[#12161c] hover:bg-[var(--accent-hover)]"
         onClick={onSave}
       >
         Save settings

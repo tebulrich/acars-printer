@@ -1,9 +1,39 @@
 from __future__ import annotations
 
-from acars_bridge.hoppie.cpdlc import CpdlcPacket
+from acars_bridge.hoppie.cpdlc import CpdlcPacket, expand_cpdlc_at_marks
 from acars_bridge.hoppie.errors import CallsignInUseError, HoppieError
 from acars_bridge.hoppie.sanitize import scrub_message_body
 from acars_bridge.hoppie.types import HoppieMessage, MessageType
+
+
+def hoppie_error_detail(raw_response: str) -> str | None:
+    """Return the Hoppie ``error …`` detail, or None when the body is not an error."""
+    body = (raw_response or "").strip()
+    if not body.lower().startswith("error"):
+        return None
+    detail = body[5:].strip()
+    if detail.startswith("{") and detail.endswith("}") and detail.count("{") == 1:
+        detail = detail[1:-1].strip()
+    return detail or "Hoppie returned an error."
+
+
+def hoppie_error_label(detail: str) -> str:
+    """Short LINK-chip wording for a Hoppie application error."""
+    low = (detail or "").lower()
+    if (
+        "invalid logon" in low
+        or "logon code" in low
+        or ("logon" in low and "accept" in low)
+    ):
+        return "Hoppie rejected logon"
+    if "callsign already in use" in low:
+        return "Hoppie callsign in use"
+    if "no from" in low:
+        return "Hoppie missing callsign"
+    cleaned = " ".join((detail or "").split())
+    if not cleaned:
+        return "Hoppie error"
+    return f"Hoppie: {cleaned[:42]}"
 
 
 def parse_response(raw_response: str, callsign: str) -> list[HoppieMessage]:
@@ -107,7 +137,7 @@ def _parse_block(block: str, callsign: str) -> HoppieMessage | None:
 def _normalize_body(packet: str, message_type: MessageType) -> str:
     body = packet.replace("\r\n", "\n").replace("\r", "\n")
     if message_type is MessageType.CPDLC:
-        body = body.replace("@", "\n")
+        body = expand_cpdlc_at_marks(body)
     lines = [line.rstrip() for line in body.split("\n")]
     while lines and lines[-1] == "":
         lines.pop()

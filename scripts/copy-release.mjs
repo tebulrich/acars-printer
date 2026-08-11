@@ -1,4 +1,11 @@
-import { copyFileSync, mkdirSync, existsSync, readdirSync, unlinkSync } from "node:fs";
+import {
+  copyFileSync,
+  mkdirSync,
+  existsSync,
+  readdirSync,
+  unlinkSync,
+  statSync,
+} from "node:fs";
 import { join } from "node:path";
 
 const root = process.cwd();
@@ -28,7 +35,11 @@ const nsisDir = join(releaseDir, "bundle", "nsis");
 if (existsSync(nsisDir)) {
   const setups = readdirSync(nsisDir)
     .filter((name) => name.endsWith("-setup.exe"))
-    .sort();
+    .sort((a, b) => {
+      const ta = statSync(join(nsisDir, a)).mtimeMs;
+      const tb = statSync(join(nsisDir, b)).mtimeMs;
+      return ta - tb;
+    });
   const latest = setups.at(-1);
   if (latest) {
     // Drop older installers so dist/ only keeps the current release setup.

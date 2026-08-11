@@ -13,6 +13,7 @@ from datetime import UTC, datetime
 from acars_bridge.network import NetworkProfile, WireFormat
 from acars_bridge.services.session import AppSession
 from acars_bridge.tap.divert import HoppieForceRedirect
+from acars_bridge.hoppie.parser import hoppie_error_detail
 from acars_bridge.tap.extract import messages_from_gfo_exchange, messages_from_hoppie_exchange
 from acars_bridge.tap.hosts import install_tap_hosts, remove_tap_hosts
 from acars_bridge.tap.proxy import HoppieForwardProxy, ProxyConfig
@@ -38,6 +39,7 @@ class TapStatus:
     https_enabled: bool = False
     last_mode: str = "tap"
     last_hoppie_type: str = "tap"
+    last_hoppie_error: str | None = None
     callsign_in_use: bool = False
 
 
@@ -242,6 +244,7 @@ class TapService:
             "duplicates": 0,
             "failed_prints": 0,
         }
+        wire_fault = hoppie_error_detail(response_text)
         if messages:
             stats = self._session.ingestion.ingest(messages, force_print=force_print)
         elif self._on_debug:
@@ -254,6 +257,10 @@ class TapService:
             self._refresh_counters_unlocked()
             self.status.last_stats = stats
             self.status.last_check = datetime.now(UTC)
+            if wire_fault:
+                self.status.last_hoppie_error = wire_fault
+            elif (response_text or "").lstrip().lower().startswith("ok"):
+                self.status.last_hoppie_error = None
             # Keep proxy TLS notes visible; don't wipe on every exchange.
             if self._proxy is not None and self._proxy.last_error:
                 self.status.last_error = self._proxy.last_error

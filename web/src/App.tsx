@@ -1,16 +1,11 @@
 import { useEffect, useRef, useState } from "react";
-import { FormatPage } from "./pages/FormatPage";
-import { HotkeysPage } from "./pages/HotkeysPage";
 import { MessagesPage } from "./pages/MessagesPage";
-import { NetworkPage } from "./pages/NetworkPage";
-import { PrintPage } from "./pages/PrintPage";
-import { SettingsPage } from "./pages/SettingsPage";
+import { SetupPage } from "./pages/SetupPage";
 import {
   applyPrintProfile,
   bootApp,
   checkUpdates,
   chipTone,
-  companionRotateToken,
   connect,
   debugClear,
   debugFolder,
@@ -18,7 +13,6 @@ import {
   deleteUserPrintProfile,
   disconnect,
   getMessage,
-  getSettings,
   hotkey,
   listMessages,
   onBridgeEvent,
@@ -50,11 +44,7 @@ import type {
 
 const NAV: { id: AppView; label: string }[] = [
   { id: "messages", label: "Messages" },
-  { id: "format", label: "Format" },
-  { id: "network", label: "Network" },
-  { id: "print", label: "Print" },
-  { id: "hotkeys", label: "Hotkeys" },
-  { id: "settings", label: "Settings" },
+  { id: "setup", label: "Setup" },
 ];
 
 const EMPTY_STATUS: BridgeStatus = {
@@ -110,6 +100,7 @@ export default function App() {
   const [toast, setToast] = useState<Toast | null>(null);
   const [debugOpen, setDebugOpen] = useState(false);
   const [debugText, setDebugText] = useState("");
+  const [moreOpen, setMoreOpen] = useState(false);
   const toastTimer = useRef<number | null>(null);
   const settingsRef = useRef<Settings | null>(null);
   settingsRef.current = settings;
@@ -142,7 +133,7 @@ export default function App() {
         setPrinters(result.printers);
         setProfiles(result.profiles);
         setProfileId(result.settings.active_print_profile || "pos80_default");
-        document.title = `ACARS Print Bridge  ${result.meta.version}  ·  1135×720`;
+        document.title = `ACARS Print Bridge ${result.meta.version}`;
         if (result.settings.auto_connect) {
           window.setTimeout(() => {
             void run(async () => {
@@ -257,7 +248,7 @@ export default function App() {
     return (
       <div className="flex h-full items-center justify-center text-[var(--muted)]">
         {bootError ? (
-          <div className="max-w-lg rounded border border-[#f0c2c2] bg-[#fff5f5] p-4 text-[var(--danger)]">
+          <div className="max-w-lg rounded border border-[var(--danger)] bg-[var(--toast-error-bg)] p-4 text-[var(--danger)]">
             {bootError}
           </div>
         ) : (
@@ -293,46 +284,18 @@ export default function App() {
               {text}
             </span>
           ))}
-          <div className="ml-auto flex flex-wrap gap-2">
-            <button
-              type="button"
-              className="rounded border border-[var(--border)] bg-white px-2 py-1 text-sm"
-              disabled={busy}
-              onClick={() =>
-                void run(async () => {
-                  const r = await simbriefPrint();
-                  setStatus((prev) => mergeStatus(prev, r.status));
-                  flash(r.message);
-                })
-              }
-            >
-              Print
-            </button>
-            <button
-              type="button"
-              className="rounded border border-[var(--border)] bg-white px-2 py-1 text-sm"
-              disabled={busy}
-              onClick={() =>
-                void run(async () => {
-                  const r = await simbriefUnlock();
-                  setStatus((prev) => mergeStatus(prev, r.status));
-                  flash(r.message);
-                })
-              }
-            >
-              Unlock
-            </button>
+          <div className="relative ml-auto flex flex-wrap items-center gap-2">
             {!status.running ? (
               <button
                 type="button"
-                className="rounded bg-[var(--accent)] px-3 py-1 text-sm text-white hover:bg-[var(--accent-hover)]"
+                className="rounded bg-[var(--accent)] px-3 py-1 text-sm text-[#12161c] hover:bg-[var(--accent-hover)]"
                 disabled={busy}
                 onClick={() =>
                   void run(async () => {
                     const st = await connect();
                     setStatus((prev) => mergeStatus(prev, st));
                     await reloadMessages();
-                    flash(`Connected — watching ${st.network_label}…`);
+                    flash("Waiting for the aircraft to send ACARS…");
                   })
                 }
               >
@@ -341,7 +304,7 @@ export default function App() {
             ) : (
               <button
                 type="button"
-                className="rounded bg-[var(--accent)] px-3 py-1 text-sm text-white hover:bg-[var(--accent-hover)]"
+                className="rounded bg-[var(--accent)] px-3 py-1 text-sm text-[#12161c] hover:bg-[var(--accent-hover)]"
                 disabled={busy}
                 onClick={() =>
                   void run(async () => {
@@ -357,28 +320,42 @@ export default function App() {
             )}
             <button
               type="button"
-              className="rounded border border-[var(--border)] bg-white px-2 py-1 text-sm"
-              onClick={() =>
-                void run(async () => {
-                  const r = await debugPaste();
-                  setDebugText(r.text);
-                  setDebugOpen(true);
-                })
-              }
+              className="rounded border border-[var(--border)] bg-[var(--btn)] px-2 py-1 text-sm"
+              aria-expanded={moreOpen}
+              onClick={() => setMoreOpen((open) => !open)}
             >
-              Debug
+              More
             </button>
-            <button
-              type="button"
-              className="rounded border border-[var(--border)] bg-white px-2 py-1 text-sm"
-              onClick={() =>
-                void run(async () => {
-                  await quitApp();
-                })
-              }
-            >
-              Quit
-            </button>
+            {moreOpen && (
+              <div className="absolute right-0 top-full z-40 mt-1 min-w-[10rem] rounded border border-[var(--border)] bg-[var(--surface)] py-1 shadow-lg">
+                <button
+                  type="button"
+                  className="block w-full px-3 py-1.5 text-left text-sm hover:bg-[var(--surface-alt)]"
+                  onClick={() => {
+                    setMoreOpen(false);
+                    void run(async () => {
+                      const r = await debugPaste();
+                      setDebugText(r.text);
+                      setDebugOpen(true);
+                    });
+                  }}
+                >
+                  Debug log
+                </button>
+                <button
+                  type="button"
+                  className="block w-full px-3 py-1.5 text-left text-sm hover:bg-[var(--surface-alt)]"
+                  onClick={() => {
+                    setMoreOpen(false);
+                    void run(async () => {
+                      await quitApp();
+                    });
+                  }}
+                >
+                  Quit
+                </button>
+              </div>
+            )}
           </div>
         </div>
         <nav className="mt-2 flex gap-3 overflow-x-auto">
@@ -399,7 +376,11 @@ export default function App() {
         </nav>
       </header>
 
-      <main className="relative min-h-0 flex-1 overflow-auto px-3 py-3">
+      <main
+        className={`relative min-h-0 flex-1 px-3 py-3 ${
+          view === "messages" ? "overflow-hidden" : "overflow-auto"
+        }`}
+      >
         {booting && (
           <div className="pointer-events-none absolute inset-0 z-10 flex items-start justify-center bg-[color-mix(in_srgb,var(--bg)_70%,transparent)] pt-16">
             <div className="rounded border border-[var(--border)] bg-[var(--surface)] px-4 py-2 text-sm text-[var(--muted)] shadow-sm">
@@ -444,12 +425,13 @@ export default function App() {
             }}
           />
         )}
-        {view === "format" && (
-          <FormatPage
+        {view === "setup" && (
+          <SetupPage
             settings={settings}
             printers={printers}
             profiles={profiles}
             profileId={profileId}
+            tapConnected={status.running}
             onProfileId={setProfileId}
             onChange={(patch) => setSettings({ ...settings, ...patch })}
             onApplyProfile={(id) =>
@@ -478,7 +460,7 @@ export default function App() {
                 flash(`Deleted ${profileId}`);
               })
             }
-            onSave={() =>
+            onSaveFormat={() =>
               void run(async () => {
                 const next = await saveFormat(settings);
                 setSettings((prev) => (prev ? { ...prev, ...next } : next));
@@ -501,14 +483,7 @@ export default function App() {
                 flash("Reset to POS-80 default");
               })
             }
-          />
-        )}
-        {view === "network" && (
-          <NetworkPage
-            settings={settings}
-            tapConnected={status.running}
-            onChange={(patch) => setSettings({ ...settings, ...patch })}
-            onSave={() =>
+            onSaveSettings={() =>
               void run(async () => {
                 const next = await saveSettings(settings);
                 setSettings(next);
@@ -517,46 +492,6 @@ export default function App() {
                 } else {
                   flash("Settings saved");
                 }
-                await reloadMessages();
-              })
-            }
-          />
-        )}
-        {view === "print" && (
-          <PrintPage
-            settings={settings}
-            onChange={(patch) => setSettings({ ...settings, ...patch })}
-            onSave={() =>
-              void run(async () => {
-                const next = await saveSettings(settings);
-                setSettings(next);
-                flash("Settings saved");
-              })
-            }
-          />
-        )}
-        {view === "hotkeys" && (
-          <HotkeysPage
-            settings={settings}
-            onChange={(patch) => setSettings({ ...settings, ...patch })}
-            onSave={() =>
-              void run(async () => {
-                const next = await saveSettings(settings);
-                setSettings(next);
-                flash("Settings saved");
-              })
-            }
-          />
-        )}
-        {view === "settings" && (
-          <SettingsPage
-            settings={settings}
-            onChange={(patch) => setSettings({ ...settings, ...patch })}
-            onSave={() =>
-              void run(async () => {
-                const next = await saveSettings(settings);
-                setSettings(next);
-                flash("Settings saved");
                 await reloadMessages();
               })
             }
@@ -592,14 +527,6 @@ export default function App() {
                 }
               })
             }
-            onRotateToken={() =>
-              void run(async () => {
-                await companionRotateToken();
-                const next = await getSettings();
-                setSettings(next);
-                flash("Companion PIN rotated — open the new phone URL");
-              })
-            }
             onOpenCompanion={() =>
               void run(async () => {
                 if (!settings.companion_url) {
@@ -618,7 +545,7 @@ export default function App() {
         <div
           className={`fixed bottom-3 left-1/2 z-50 max-w-xl -translate-x-1/2 rounded border px-3 py-2 text-sm shadow ${
             toast.error
-              ? "border-[#f0c2c2] bg-[#fff5f5] text-[var(--danger)]"
+              ? "border-[var(--danger)] bg-[var(--toast-error-bg)] text-[var(--danger)]"
               : "border-[var(--border)] bg-[var(--surface)] text-[var(--text)]"
           }`}
         >
@@ -674,7 +601,7 @@ export default function App() {
                 </button>
               </div>
             </div>
-            <pre className="min-h-0 flex-1 overflow-auto bg-[#0f1720] p-3 font-mono text-xs text-[#d7e0ea]">
+            <pre className="min-h-0 flex-1 overflow-auto bg-[var(--mono-bg)] p-3 font-mono text-xs text-[var(--mono-fg)]">
               {debugText}
             </pre>
           </div>

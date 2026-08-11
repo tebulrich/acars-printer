@@ -1,6 +1,6 @@
 [package]
 name = "acars-print-bridge"
-version = "1.2.7"
+version = "1.2.11"
 description = "ACARS Print Bridge — Hoppie / SayIntentions printer bridge"
 authors = ["Tebin Ulrich"]
 edition = "2021"

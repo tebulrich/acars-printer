@@ -1,14 +1,14 @@
 :root {
-  --bg: #e8edf3;
-  --surface: #ffffff;
-  --ink: #10151c;
-  --muted: #5a6572;
-  --line: #cfd7e2;
-  --accent: #1a4f8c;
-  --accent-press: #143c6b;
-  --ok: #1a7a45;
-  --warn: #8a5b0a;
-  --danger: #b42318;
+  --bg: #12161c;
+  --surface: #1a212b;
+  --ink: #e8eef7;
+  --muted: #9aa8bc;
+  --line: #2f3b4d;
+  --accent: #3dd6c6;
+  --accent-press: #2a9d8f;
+  --ok: #80ed99;
+  --warn: #f4a261;
+  --danger: #e76f51;
   --mono: "IBM Plex Mono", ui-monospace, Consolas, monospace;
   --sans: "IBM Plex Sans", system-ui, -apple-system, sans-serif;
   --safe-bottom: env(safe-area-inset-bottom, 0px);
@@ -25,9 +25,9 @@ body {
   margin: 0;
   min-height: 100%;
   background:
-    radial-gradient(1000px 420px at 8% -8%, #d4e3f5 0%, transparent 55%),
-    radial-gradient(800px 360px at 100% 0%, #dce8df 0%, transparent 48%),
-    linear-gradient(180deg, #eef2f7 0%, var(--bg) 40%);
+    radial-gradient(1000px 420px at 8% -8%, #1b2a38 0%, transparent 55%),
+    radial-gradient(800px 360px at 100% 0%, #1a2824 0%, transparent 48%),
+    linear-gradient(180deg, #161b22 0%, var(--bg) 40%);
   color: var(--ink);
   font: 16px/1.45 var(--sans);
   -webkit-tap-highlight-color: transparent;
@@ -85,14 +85,14 @@ body {
 
 .pill.ok {
   color: var(--ok);
-  border-color: #b7e0c6;
-  background: #f2fbf5;
+  border-color: color-mix(in srgb, var(--ok) 35%, var(--line));
+  background: color-mix(in srgb, var(--ok) 12%, var(--surface));
 }
 
 .pill.warn {
   color: var(--warn);
-  border-color: #ead7a2;
-  background: #fff9eb;
+  border-color: color-mix(in srgb, var(--warn) 35%, var(--line));
+  background: color-mix(in srgb, var(--warn) 12%, var(--surface));
 }
 
 .pill.muted {
@@ -134,8 +134,8 @@ body {
 .tab.active {
   color: var(--accent);
   border-color: color-mix(in srgb, var(--accent) 28%, var(--line));
-  background: #fff;
-  box-shadow: 0 1px 0 rgba(16, 21, 28, 0.05);
+  background: var(--surface);
+  box-shadow: 0 1px 0 rgba(0, 0, 0, 0.25);
 }
 
 .view {
@@ -163,7 +163,7 @@ body {
   border: 1px solid var(--line);
   border-radius: 16px;
   padding: 16px;
-  box-shadow: 0 12px 28px rgba(16, 21, 28, 0.05);
+  box-shadow: 0 12px 28px rgba(0, 0, 0, 0.28);
 }
 
 .card h2 {
@@ -215,7 +215,7 @@ select {
   padding: 13px 12px;
   font: 1.02rem/1.35 var(--sans);
   color: var(--ink);
-  background: #fbfcfd;
+  background: #161c24;
   min-height: 46px;
 }
 
@@ -267,19 +267,19 @@ button:disabled {
 
 .primary {
   border: 1px solid var(--line);
-  background: #fff;
+  background: #222b38;
   color: var(--ink);
 }
 
 .primary:active {
-  background: #f3f6fa;
+  background: #2a3444;
 }
 
 .accent {
   width: 100%;
   border: 0;
   background: var(--accent);
-  color: #fff;
+  color: #12161c;
 }
 
 .accent:active {
@@ -288,7 +288,7 @@ button:disabled {
 
 .ghost {
   border: 1px solid var(--line);
-  background: #fff;
+  background: #222b38;
   color: var(--muted);
   padding: 8px 12px;
   font-size: 0.86rem;
@@ -406,14 +406,30 @@ button:disabled {
   min-height: 160px;
 }
 
+.detail-actions {
+  margin-top: 12px;
+  display: grid;
+  gap: 8px;
+}
+
+.reply-row {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(96px, 1fr));
+  gap: 8px;
+}
+
+.reply-row.hidden {
+  display: none;
+}
+
 .toast {
   position: fixed;
   left: 50%;
   bottom: calc(18px + var(--safe-bottom));
   transform: translateX(-50%);
   max-width: min(520px, calc(100% - 24px));
-  background: var(--ink);
-  color: #fff;
+  background: #0f1720;
+  color: #e8eef7;
   border-radius: 12px;
   padding: 12px 14px;
   font-size: 0.92rem;

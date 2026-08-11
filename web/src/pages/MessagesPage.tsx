@@ -1,3 +1,5 @@
+import { useEffect, useRef } from "react";
+import { formatMessageTime } from "../time";
 import type { MessageRow, Settings } from "../types";
 
 interface Props {
@@ -26,17 +28,31 @@ export function MessagesPage({
   running,
 }: Props) {
   const showDetail = !autoPrint || detailOpened;
+  const detailScrollRef = useRef<HTMLDivElement>(null);
+  const selectedBtnRef = useRef<HTMLButtonElement>(null);
+
+  useEffect(() => {
+    const pane = detailScrollRef.current;
+    if (pane) pane.scrollTop = 0;
+  }, [detail?.id]);
+
+  useEffect(() => {
+    selectedBtnRef.current?.scrollIntoView({ block: "nearest", inline: "nearest" });
+  }, [selectedId]);
 
   return (
-    <div className="grid h-full min-h-0 grid-cols-1 gap-3 lg:grid-cols-[minmax(0,1fr)_minmax(0,1.1fr)]">
-      <section className="flex min-h-0 flex-col rounded border border-[var(--border)] bg-[var(--surface)]">
+    <div
+      className="grid h-full min-h-0 grid-cols-[minmax(0,1fr)_minmax(0,1.15fr)] gap-3"
+      style={{ gridTemplateRows: "minmax(0, 1fr)" }}
+    >
+      <section className="flex h-full min-h-0 flex-col overflow-hidden rounded border border-[var(--border)] bg-[var(--surface)]">
         <div className="flex items-center justify-between border-b border-[var(--border)] px-3 py-2">
           <h2 className="text-xs font-semibold uppercase tracking-wide text-[var(--muted)]">
             Messages
           </h2>
           <button
             type="button"
-            className="rounded border border-[var(--border)] bg-white px-2 py-1 text-sm hover:bg-[var(--bg)]"
+            className="rounded border border-[var(--border)] bg-[var(--btn)] px-2 py-1 text-sm hover:bg-[var(--surface-alt)]"
             onClick={onRefresh}
           >
             Refresh
@@ -46,21 +62,22 @@ export function MessagesPage({
           {messages.length === 0 && (
             <li className="px-3 py-6 text-sm text-[var(--muted)]">
               {running
-                ? "Connected — waiting for ACARS traffic…"
-                : "No messages yet. Connect to start watching."}
+                ? "Waiting for the aircraft to send ACARS…"
+                : "No messages yet. Connect, then use ACARS in the sim."}
             </li>
           )}
           {messages.map((m) => (
             <li key={m.id}>
               <button
                 type="button"
+                ref={selectedId === m.id ? selectedBtnRef : undefined}
                 className={`flex w-full flex-col gap-0.5 border-b border-[var(--border)] px-3 py-2 text-left hover:bg-[var(--bg)] ${
-                  selectedId === m.id ? "bg-[#eaf1fb]" : ""
+                  selectedId === m.id ? "bg-[var(--selected)]" : ""
                 }`}
                 onClick={() => onSelect(m.id)}
               >
                 <div className="flex items-center gap-2 text-xs text-[var(--muted)]">
-                  <span>{m.received_at.slice(11, 16)}Z</span>
+                  <span>{formatMessageTime(m.received_at)}</span>
                   <span>{m.direction.toUpperCase()}</span>
                   <span>{m.station || "—"}</span>
                   <span className="ml-auto font-medium">{m.print_mark}</span>
@@ -75,7 +92,7 @@ export function MessagesPage({
         </ul>
       </section>
 
-      <section className="flex min-h-0 flex-col rounded border border-[var(--border)] bg-[var(--surface)]">
+      <section className="flex h-full min-h-0 flex-col overflow-hidden rounded border border-[var(--border)] bg-[var(--surface)]">
         <div className="flex items-center justify-between border-b border-[var(--border)] px-3 py-2">
           <h2 className="text-xs font-semibold uppercase tracking-wide text-[var(--muted)]">
             Detail
@@ -84,7 +101,7 @@ export function MessagesPage({
             {showDetail && detail && (
               <button
                 type="button"
-                className="rounded bg-[var(--accent)] px-2 py-1 text-sm text-white hover:bg-[var(--accent-hover)]"
+                className="rounded bg-[var(--accent)] px-2 py-1 text-sm text-[#12161c] hover:bg-[var(--accent-hover)]"
                 onClick={onPrint}
               >
                 Print
@@ -93,7 +110,7 @@ export function MessagesPage({
             {autoPrint && detailOpened && (
               <button
                 type="button"
-                className="rounded border border-[var(--border)] bg-white px-2 py-1 text-sm"
+                className="rounded border border-[var(--border)] bg-[var(--btn)] px-2 py-1 text-sm"
                 onClick={onHide}
               >
                 Hide
@@ -101,7 +118,7 @@ export function MessagesPage({
             )}
           </div>
         </div>
-        <div className="min-h-0 flex-1 overflow-auto p-3">
+        <div ref={detailScrollRef} className="min-h-0 flex-1 overflow-auto p-3">
           {!showDetail || !detail ? (
             <p className="text-sm text-[var(--muted)]">Select a message to inspect.</p>
           ) : (
@@ -110,9 +127,9 @@ export function MessagesPage({
                 {detail.message_type.toUpperCase()} · {detail.station || "—"}
               </div>
               <div className="mb-3 text-xs text-[var(--muted)]">
-                {detail.received_at} · {detail.direction.toUpperCase()} · {detail.callsign}
+                {formatMessageTime(detail.received_at)} · {detail.direction.toUpperCase()} · {detail.callsign}
               </div>
-              <pre className="whitespace-pre-wrap rounded bg-[#0f1720] p-3 font-mono text-[13px] leading-relaxed text-[#d7e0ea]">
+              <pre className="whitespace-pre-wrap rounded bg-[var(--mono-bg)] p-3 font-mono text-[13px] leading-relaxed text-[var(--mono-fg)]">
                 {detail.normalized_body || ""}
               </pre>
             </>

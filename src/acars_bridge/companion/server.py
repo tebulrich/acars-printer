@@ -12,7 +12,6 @@ from typing import TYPE_CHECKING, Any
 from urllib.parse import parse_qs, urlparse
 
 from acars_bridge.companion.api import CompanionApi, dumps, error_payload
-from acars_bridge.companion.auth import extract_token, token_ok
 
 if TYPE_CHECKING:
     from acars_bridge.bridge.runtime import BridgeRuntime
@@ -46,10 +45,8 @@ class CompanionServer:
         settings = self.runtime.session.settings
         if not settings.companion_enabled():
             return
-        settings.ensure_companion_token()
         port = settings.companion_port()
         api = self.api
-        expected = settings.companion_token()
 
         class Handler(BaseHTTPRequestHandler):
             def log_message(self, fmt: str, *args: Any) -> None:
@@ -66,12 +63,6 @@ class CompanionServer:
             def _json(self, code: int, payload: dict[str, Any]) -> None:
                 self._send(code, dumps(payload), "application/json; charset=utf-8")
 
-            def _require_auth(self) -> bool:
-                if token_ok(extract_token(self), expected):
-                    return True
-                self._json(401, {"ok": False, "error": "Unauthorized — check PIN / token"})
-                return False
-
             def _read_json(self) -> dict[str, Any]:
                 length = int(self.headers.get("Content-Length") or 0)
                 raw = self.rfile.read(length) if length else b"{}"
@@ -83,7 +74,7 @@ class CompanionServer:
             def do_OPTIONS(self) -> None:  # noqa: N802
                 self.send_response(204)
                 self.send_header("Access-Control-Allow-Origin", "*")
-                self.send_header("Access-Control-Allow-Headers", "Authorization, Content-Type, X-Companion-Token")
+                self.send_header("Access-Control-Allow-Headers", "Content-Type")
                 self.send_header("Access-Control-Allow-Methods", "GET, POST, OPTIONS")
                 self.end_headers()
 
@@ -93,8 +84,6 @@ class CompanionServer:
                 qs = parse_qs(parsed.query)
 
                 if path.startswith("/api/"):
-                    if not self._require_auth():
-                        return
                     try:
                         if path == "/api/status":
                             self._json(200, api.status())
@@ -121,7 +110,6 @@ class CompanionServer:
                         self._json(code, payload)
                     return
 
-                # Static UI — allow token in query for first paint
                 if path == "/" or path == "/index.html":
                     self._serve_static("index.html")
                     return
@@ -136,8 +124,6 @@ class CompanionServer:
                 path = parsed.path.rstrip("/") or "/"
                 if not path.startswith("/api/"):
                     self._json(404, {"ok": False, "error": "Not found"})
-                    return
-                if not self._require_auth():
                     return
                 try:
                     body = self._read_json()
@@ -171,6 +157,17 @@ class CompanionServer:
                         return
                     if path == "/api/pdc":
                         self._json(200, api.request_pdc(body))
+                        return
+                    if path.endswith("/print") and path.startswith("/api/messages/"):
+                        mid = int(path.split("/")[3])
+                        self._json(200, api.print_message(mid))
+                        return
+                    if path.endswith("/reply") and path.startswith("/api/messages/"):
+                        mid = int(path.split("/")[3])
+                        self._json(
+                            200,
+                            api.reply_cpdlc(mid, str(body.get("reply") or "")),
+                        )
                         return
                     self._json(404, {"ok": False, "error": "Not found"})
                 except Exception as exc:  # noqa: BLE001

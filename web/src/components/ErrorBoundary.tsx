@@ -24,7 +24,7 @@ export class ErrorBoundary extends Component<Props, State> {
     if (this.state.error) {
       return (
         <div className="flex h-full flex-col items-center justify-center gap-3 bg-[var(--bg)] p-6 text-center">
-          <div className="max-w-lg rounded border border-[#f0c2c2] bg-[#fff5f5] p-4 text-sm text-[var(--danger)]">
+          <div className="max-w-lg rounded border border-[var(--danger)] bg-[var(--toast-error-bg)] p-4 text-sm text-[var(--danger)]">
             Something went wrong in the UI: {this.state.error}
           </div>
           <button

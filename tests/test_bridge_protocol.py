@@ -40,9 +40,9 @@ def test_link_status_info_note_is_not_an_error(runtime: BridgeRuntime) -> None:
         "Hoppie: sim traffic only (website / companion apps stay direct)"
     )
     link = runtime._link_chip()
-    assert link["state"] == "ok"
+    assert link["state"] in {"ok", "busy"}
     assert "err" not in link["text"].lower()
-    assert "on" in link["text"].lower() or "seen" in link["text"].lower()
+    assert "waiting" in link["text"].lower() or "hoppie ok" in link["text"].lower()
     assert "sim traffic" in (link.get("tip") or "").lower()
 
 
@@ -53,6 +53,26 @@ def test_link_status_real_failure_says_issue_not_err(runtime: BridgeRuntime) -> 
     assert link["state"] == "warn"
     assert "err" not in link["text"].lower()
     assert "issue" in link["text"].lower()
+
+
+def test_link_status_hoppie_rejected_logon(runtime: BridgeRuntime) -> None:
+    runtime.tap.status.running = True
+    runtime.tap.status.last_hoppie_error = "invalid logon code"
+    link = runtime._link_chip()
+    assert link["state"] == "warn"
+    assert link["text"] == "Hoppie rejected logon"
+    assert "invalid logon" in (link.get("tip") or "").lower()
+
+
+def test_link_status_hoppie_ok_shows_callsign(runtime: BridgeRuntime) -> None:
+    runtime.tap.status.running = True
+    runtime.tap.status.exchanges = 4
+    runtime.session.wire_session.update(
+        logon="secret", from_cs="DLH4MC", network_id="hoppie"
+    )
+    link = runtime._link_chip()
+    assert link["state"] == "ok"
+    assert link["text"] == "Hoppie ok · DLH4MC"
 
 
 def test_boot_returns_meta_settings_and_status(runtime: BridgeRuntime) -> None:
@@ -190,7 +210,7 @@ def test_connect_allows_console_destination(runtime: BridgeRuntime) -> None:
 
 def test_connect_disconnect_with_fake_tap(runtime: BridgeRuntime) -> None:
     status = _ok(runtime, "connect")
-    assert status["link"]["state"] in {"ok", "…", "..."}
+    assert status["link"]["state"] in {"ok", "busy", "…", "..."}
     assert status["running"] is True
     status = _ok(runtime, "disconnect")
     assert status["running"] is False

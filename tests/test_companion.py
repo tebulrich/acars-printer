@@ -83,7 +83,7 @@ def test_outbound_unlocked_when_companion_station_on(tmp_path, fixture_text):
     session.close()
 
 
-def test_companion_http_auth_and_messages(tmp_path):
+def test_companion_http_open_on_lan(tmp_path):
     port = _free_port()
     session = build_session(AppPaths.for_testing(tmp_path), use_fake_printer=True)
     session.settings.set_callsign("SWR14")
@@ -91,7 +91,6 @@ def test_companion_http_auth_and_messages(tmp_path):
     session.settings.set_companion_enabled(True)
     session.settings.set_companion_station_enabled(False)
     session.settings.set_companion_port(port)
-    token = session.settings.ensure_companion_token()
 
     session.messages.insert_inbound(
         HoppieMessage(
@@ -111,29 +110,19 @@ def test_companion_http_auth_and_messages(tmp_path):
         base = f"http://127.0.0.1:{port}"
         _wait_http(f"{base}/")
 
-        denied = httpx.get(f"{base}/api/status", timeout=2.0)
-        assert denied.status_code == 401
-
-        ok = httpx.get(
-            f"{base}/api/status",
-            headers={"Authorization": f"Bearer {token}"},
-            timeout=2.0,
-        )
+        ok = httpx.get(f"{base}/api/status", timeout=2.0)
         assert ok.status_code == 200
         payload = ok.json()
         assert payload["callsign"] == "SWR14"
         assert payload["message_count"] >= 1
+        assert "?token=" not in (payload.get("url") or "")
 
-        inbox = httpx.get(
-            f"{base}/api/messages?limit=20",
-            headers={"X-Companion-Token": token},
-            timeout=2.0,
-        )
+        inbox = httpx.get(f"{base}/api/messages?limit=20", timeout=2.0)
         assert inbox.status_code == 200
         messages = inbox.json()["messages"]
         assert any("OPS CHECK" in (m.get("preview") or "") for m in messages)
 
-        page = httpx.get(f"{base}/?token={token}", timeout=2.0)
+        page = httpx.get(f"{base}/", timeout=2.0)
         assert page.status_code == 200
         assert "ACARS Companion" in page.text
     finally:
@@ -152,7 +141,6 @@ def test_companion_send_blocked_without_station(tmp_path):
     session.settings.set_companion_enabled(True)
     session.settings.set_companion_station_enabled(False)
     session.settings.set_companion_port(port)
-    token = session.settings.ensure_companion_token()
 
     runtime = BridgeRuntime(session, tap_factory=FakeTapService)
     try:
@@ -160,7 +148,6 @@ def test_companion_send_blocked_without_station(tmp_path):
         _wait_http(f"{base}/")
         res = httpx.post(
             f"{base}/api/telex",
-            headers={"Authorization": f"Bearer {token}"},
             json={"to": "SWROPS", "text": "NOPE"},
             timeout=2.0,
         )
@@ -189,18 +176,15 @@ def test_companion_telex_wx_and_pdc_when_station_on(tmp_path, fixture_text):
     # Station off at boot so poller does not race the HTTP assertions.
     session.settings.set_companion_station_enabled(False)
     session.settings.set_companion_port(port)
-    token = session.settings.ensure_companion_token()
 
     runtime = BridgeRuntime(session, tap_factory=FakeTapService)
     try:
         session.settings.set_companion_station_enabled(True)
         base = f"http://127.0.0.1:{port}"
         _wait_http(f"{base}/")
-        headers = {"Authorization": f"Bearer {token}"}
 
         telex = httpx.post(
             f"{base}/api/telex",
-            headers=headers,
             json={"to": "SWROPS", "text": "HELLO"},
             timeout=3.0,
         )
@@ -209,7 +193,6 @@ def test_companion_telex_wx_and_pdc_when_station_on(tmp_path, fixture_text):
 
         wx = httpx.post(
             f"{base}/api/weather",
-            headers=headers,
             json={"kind": "metar", "icao": "EGLL"},
             timeout=3.0,
         )
@@ -217,7 +200,6 @@ def test_companion_telex_wx_and_pdc_when_station_on(tmp_path, fixture_text):
 
         atis = httpx.post(
             f"{base}/api/atis",
-            headers=headers,
             json={"icao": "EGLL", "side": "dep", "source": "vatatis"},
             timeout=3.0,
         )
@@ -225,7 +207,6 @@ def test_companion_telex_wx_and_pdc_when_station_on(tmp_path, fixture_text):
 
         pdc = httpx.post(
             f"{base}/api/pdc",
-            headers=headers,
             json={
                 "station": "EGLL",
                 "departure": "EGLL",
@@ -257,19 +238,66 @@ def test_companion_telex_wx_and_pdc_when_station_on(tmp_path, fixture_text):
         runtime.shutdown()
 
 
-def test_bridge_rotate_token_command(tmp_path):
+def test_companion_reprint_and_cpdlc_reply(tmp_path):
     port = _free_port()
-    session = build_session(AppPaths.for_testing(tmp_path), use_fake_printer=True)
+    router = _Router({"cpdlc": "ok"})
+    client = HoppieClient("https://example.test/connect.html", transport=router)
+    session = build_session(
+        AppPaths.for_testing(tmp_path), client=client, use_fake_printer=True
+    )
+    session.settings.set_callsign("SWR14")
+    session.settings.set_hoppie_logon("secret-logon-code")
     session.settings.set_companion_enabled(True)
+    session.settings.set_companion_station_enabled(True)
     session.settings.set_companion_port(port)
-    old = session.settings.ensure_companion_token()
+
+    stored = session.messages.insert_inbound(
+        HoppieMessage(
+            callsign="SWR14",
+            sender="LSAS_CTR",
+            recipient="SWR14",
+            message_type=MessageType.CPDLC,
+            raw_payload="{LSAS_CTR cpdlc {/data2/15//WU/CLIMB}}",
+            normalized_body="CLIMB TO FL360",
+            min=15,
+            ra="WU",
+        ),
+        fingerprint="test-cpdlc-wu-1",
+    )
+    assert stored is not None
+
     runtime = BridgeRuntime(session, tap_factory=FakeTapService)
     try:
-        result = runtime.handle("companion_rotate_token", {})
-        assert result["ok"] is True
-        data = result["data"]
-        assert data["token"] != old
-        assert session.settings.companion_token() == data["token"]
+        base = f"http://127.0.0.1:{port}"
+        _wait_http(f"{base}/")
+
+        detail = httpx.get(f"{base}/api/messages/{stored.id}", timeout=2.0)
+        assert detail.status_code == 200
+        payload = detail.json()
+        assert payload["can_reply"] is True
+        assert "WILCO" in payload["reply_choices"]
+
+        printed = httpx.post(
+            f"{base}/api/messages/{stored.id}/print",
+            json={},
+            timeout=3.0,
+        )
+        assert printed.status_code == 200, printed.text
+        assert printed.json()["ok"] is True
+        assert session.print_manager._printer.printed
+
+        wilco = httpx.post(
+            f"{base}/api/messages/{stored.id}/reply",
+            json={"reply": "WILCO"},
+            timeout=3.0,
+        )
+        assert wilco.status_code == 200, wilco.text
+        assert wilco.json()["ok"] is True
+        bodies = [parse_qs(r.content.decode()) for r in router.requests]
+        assert any(
+            b.get("type") == ["cpdlc"] and "WILCO" in b.get("packet", [""])[0]
+            for b in bodies
+        )
     finally:
         runtime.shutdown()
 

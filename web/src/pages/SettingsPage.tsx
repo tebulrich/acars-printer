@@ -8,12 +8,9 @@ interface Props {
   onPrintOfp: () => void;
   onUnlockOfp: () => void;
   onCheckUpdates: () => void;
-  onRotateToken: () => void;
-  onOpenCompanion: () => void;
 }
 
-const inputClass =
-  "rounded border border-[var(--border)] bg-white px-2 py-1.5 text-sm outline-none focus:border-[var(--accent)]";
+const inputClass = "inp text-sm";
 
 function Field({
   label,
@@ -40,8 +37,6 @@ export function SettingsPage({
   onPrintOfp,
   onUnlockOfp,
   onCheckUpdates,
-  onRotateToken,
-  onOpenCompanion,
 }: Props) {
   return (
     <section className="space-y-4">
@@ -135,113 +130,32 @@ export function SettingsPage({
         <div className="mt-4 flex flex-wrap gap-2">
           <button
             type="button"
-            className="rounded bg-[var(--accent)] px-3 py-1.5 text-sm text-white hover:bg-[var(--accent-hover)]"
+            className="rounded bg-[var(--accent)] px-3 py-1.5 text-sm text-[#12161c] hover:bg-[var(--accent-hover)]"
             onClick={onSave}
           >
             Save settings
           </button>
           <button
             type="button"
-            className="rounded border border-[var(--border)] bg-white px-3 py-1.5 text-sm"
+            className="rounded border border-[var(--border)] bg-[var(--btn)] px-3 py-1.5 text-sm"
             onClick={onPrintOfp}
           >
             Print OFP now
           </button>
           <button
             type="button"
-            className="rounded border border-[var(--border)] bg-white px-3 py-1.5 text-sm"
+            className="rounded border border-[var(--border)] bg-[var(--btn)] px-3 py-1.5 text-sm"
             onClick={onUnlockOfp}
           >
             Unlock OFP
           </button>
           <button
             type="button"
-            className="rounded border border-[var(--border)] bg-white px-3 py-1.5 text-sm"
+            className="rounded border border-[var(--border)] bg-[var(--btn)] px-3 py-1.5 text-sm"
             onClick={onCheckUpdates}
           >
             Check for updates now
           </button>
-        </div>
-      </div>
-
-      <div className="rounded border border-[var(--border)] bg-[var(--surface)] p-4">
-        <h2 className="mb-1 text-sm font-semibold text-[var(--text)]">Phone companion</h2>
-        <p className="mb-3 text-sm text-[var(--muted)]">
-          Open a simple page on your phone (same Wi‑Fi) to read printed ACARS
-          messages. Optional: let the phone request weather, ATIS, telex, or PDC
-          when the aircraft itself cannot.
-        </p>
-        <div className="grid max-w-xl gap-3">
-          <label className="grid gap-1 text-sm">
-            <span className="flex items-center gap-2">
-              <input
-                type="checkbox"
-                checked={settings.companion_enabled}
-                onChange={(e) => onChange({ companion_enabled: e.target.checked })}
-              />
-              Let my phone show the message inbox
-            </span>
-            <span className="pl-6 text-xs text-[var(--muted)]">
-              Starts a small local web page. Copy the phone URL below after saving.
-              To let the phone request/send ACARS, use Network → Companion station
-              mode.
-            </span>
-          </label>
-          <Field
-            label="Port number"
-            hint="Usually leave at 8765 unless something else on your PC already uses it."
-          >
-            <input
-              type="number"
-              min={1024}
-              max={65535}
-              className={inputClass}
-              value={settings.companion_port}
-              onChange={(e) => onChange({ companion_port: Number(e.target.value) })}
-            />
-          </Field>
-          {settings.companion_enabled && settings.companion_url && (
-            <div className="rounded border border-[var(--border)] bg-[var(--bg)] p-3 text-sm">
-              <div className="mb-1 text-xs uppercase tracking-wide text-[var(--muted)]">
-                Phone URL
-              </div>
-              <code className="break-all text-[13px]">{settings.companion_url}</code>
-            </div>
-          )}
-        </div>
-        <div className="mt-4 flex flex-wrap gap-2">
-          <button
-            type="button"
-            className="rounded bg-[var(--accent)] px-3 py-1.5 text-sm text-white hover:bg-[var(--accent-hover)]"
-            onClick={onSave}
-          >
-            Save settings
-          </button>
-          {settings.companion_url && (
-            <button
-              type="button"
-              className="rounded border border-[var(--border)] bg-white px-3 py-1.5 text-sm"
-              onClick={() => void navigator.clipboard.writeText(settings.companion_url)}
-            >
-              Copy URL
-            </button>
-          )}
-          <button
-            type="button"
-            className="rounded border border-[var(--border)] bg-white px-3 py-1.5 text-sm"
-            onClick={onRotateToken}
-          >
-            Rotate PIN
-          </button>
-          {settings.companion_url && (
-            <button
-              type="button"
-              className="rounded border border-[var(--border)] bg-white px-3 py-1.5 text-sm"
-              onClick={onOpenCompanion}
-            >
-              Open in browser
-            </button>
-          )}
         </div>
       </div>
     </section>

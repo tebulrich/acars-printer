@@ -234,7 +234,7 @@ class BridgeRuntime:
             "companion_enabled": s.companion_enabled(),
             "companion_station_enabled": s.companion_station_enabled(),
             "companion_port": s.companion_port(),
-            "companion_token": s.companion_token() if s.companion_enabled() else "",
+            "companion_token": "",
             "companion_url": "",
         }
         if s.companion_enabled():
@@ -242,9 +242,7 @@ class BridgeRuntime:
                 from acars_bridge.companion.lan import primary_lan_ip
 
                 ip = primary_lan_ip()
-                data["companion_url"] = (
-                    f"http://{ip}:{s.companion_port()}/?token={s.companion_token()}"
-                )
+                data["companion_url"] = f"http://{ip}:{s.companion_port()}/"
             except Exception:
                 pass
         return data
@@ -367,12 +365,24 @@ class BridgeRuntime:
         return {"id": "flt", "text": text, "tip": tip}
 
     def _link_chip(self) -> dict[str, Any]:
+        from acars_bridge.hoppie.parser import hoppie_error_label
+
         st = self.tap.status
         note = (getattr(st, "last_note", None) or "").strip()
         err = (st.last_error or "").strip()
-        tip = err or note
+        hoppie_err = (getattr(st, "last_hoppie_error", None) or "").strip()
+        wire = self.session.wire_session.status_dict()
+        from_cs = str(wire.get("from") or "").strip()
+        tip = hoppie_err or err or note
         if not st.running:
             return {"id": "link", "text": "LINK off", "state": "off", "tip": tip}
+        if hoppie_err:
+            return {
+                "id": "link",
+                "text": hoppie_error_label(hoppie_err),
+                "state": "warn",
+                "tip": hoppie_err,
+            }
         if err and "trust setup" not in err.lower() and "sim traffic only" not in err.lower():
             hhmm = st.last_check.strftime("%H:%M") if st.last_check else "--:--"
             return {
@@ -381,22 +391,26 @@ class BridgeRuntime:
                 "state": "warn",
                 "tip": err,
             }
+        if from_cs:
+            return {
+                "id": "link",
+                "text": f"Hoppie ok · {from_cs}",
+                "state": "ok",
+                "tip": tip or f"Aircraft session {from_cs}.",
+            }
         if st.exchanges:
             return {
                 "id": "link",
-                "text": f"LINK {st.exchanges} seen",
+                "text": f"Hoppie ok · {st.exchanges} seen",
                 "state": "ok",
                 "tip": tip or "Aircraft ACARS exchanges seen.",
             }
-        if st.last_check:
-            hhmm = st.last_check.strftime("%H:%M")
-            return {
-                "id": "link",
-                "text": f"LINK on · {hhmm}Z",
-                "state": "ok",
-                "tip": tip or "Watching aircraft ACARS.",
-            }
-        return {"id": "link", "text": "LINK …", "state": "busy", "tip": tip}
+        return {
+            "id": "link",
+            "text": "Waiting for aircraft",
+            "state": "busy",
+            "tip": tip or "Connect is on. Use ACARS in the sim.",
+        }
 
     def _power_chip(self) -> dict[str, str]:
         from acars_bridge.simconnect.monitor import SimSnapshot, aircraft_is_powered
@@ -704,8 +718,7 @@ class BridgeRuntime:
             return _err(message)
         status = self.build_status()
         note = self.tap.status.last_error
-        net = self.session.settings.network_profile().label
-        msg = note or f"Connected — watching {net}…"
+        msg = note or "Waiting for the aircraft to send ACARS…"
         self.emit_event("toast", {"message": msg, "error": False})
         self.emit_event("status", status)
         return _ok(status)
@@ -768,7 +781,7 @@ class BridgeRuntime:
             self._tick_unlocked()
 
     def _tick_unlocked(self) -> None:
-        from acars_bridge.simconnect.monitor import SimSnapshot, aircraft_is_powered
+        from acars_bridge.simconnect.monitor import SimSnapshot
 
         snap = self.session.simconnect.snapshot()
         was_blocking = self.session.sterile.is_blocking
@@ -785,18 +798,6 @@ class BridgeRuntime:
         now_powered = self.session.sterile.battery_on
 
         if isinstance(snap, SimSnapshot) and snap.connected:
-            elec = dict(snap.electrical or {})
-            self.debug.info(
-                "electrical_buses",
-                decision_powered=aircraft_is_powered(snap),
-                gate_blocking=now_blocking,
-                gate_require_powered=self.session.sterile.require_powered,
-                snap_battery_on=snap.battery_on,
-                snap_main_bus=snap.main_bus_voltage,
-                snap_ext=snap.external_power_on,
-                snap_apu=snap.apu_generator_on,
-                **elec,
-            )
             detail = snap.detail or ""
             if detail and detail != self._last_simconnect_detail:
                 self._last_simconnect_detail = detail
@@ -1023,7 +1024,6 @@ class BridgeRuntime:
             ),
         }
         if s.companion_enabled():
-            info["token"] = s.companion_token()
             info["url"] = self.serialize_settings().get("companion_url") or ""
         return info
 
@@ -1057,7 +1057,6 @@ class BridgeRuntime:
         blocked: str | None = None
         try:
             if s.companion_enabled():
-                s.ensure_companion_token()
                 # Restart if port changed while running.
                 if self.companion_server.running:
                     self.companion_server.stop()
@@ -1082,13 +1081,6 @@ class BridgeRuntime:
 
     def cmd_companion_status(self, _args: dict[str, Any]) -> dict[str, Any]:
         return _ok(self._companion_info())
-
-    def cmd_companion_rotate_token(self, _args: dict[str, Any]) -> dict[str, Any]:
-        token = self.session.settings.rotate_companion_token()
-        self._sync_companion()
-        info = self._companion_info()
-        info["token"] = token
-        return _ok(info)
 
     def cmd_clear_messages(self, _args: dict[str, Any]) -> dict[str, Any]:
         self.session.messages.clear_all()

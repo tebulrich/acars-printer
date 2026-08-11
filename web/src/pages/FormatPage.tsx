@@ -39,8 +39,7 @@ function mmHint(px: number): string {
   return `About ${mm} mm tall on a typical POS-80 (8 dots ≈ 1 mm). Lower if text looks too big.`;
 }
 
-const inputClass =
-  "rounded border border-[var(--border)] bg-white px-2 py-1.5 text-sm outline-none focus:border-[var(--accent)]";
+const inputClass = "inp text-sm";
 
 export function FormatPage({
   settings,
@@ -81,21 +80,21 @@ export function FormatPage({
           </Field>
           <button
             type="button"
-            className="rounded border border-[var(--border)] bg-white px-3 py-1.5 text-sm"
+            className="rounded border border-[var(--border)] bg-[var(--btn)] px-3 py-1.5 text-sm"
             onClick={() => onApplyProfile(profileId)}
           >
             Apply profile
           </button>
           <button
             type="button"
-            className="rounded border border-[var(--border)] bg-white px-3 py-1.5 text-sm"
+            className="rounded border border-[var(--border)] bg-[var(--btn)] px-3 py-1.5 text-sm"
             onClick={onSaveProfile}
           >
             Save as…
           </button>
           <button
             type="button"
-            className="rounded border border-[var(--border)] bg-white px-3 py-1.5 text-sm"
+            className="rounded border border-[var(--border)] bg-[var(--btn)] px-3 py-1.5 text-sm"
             onClick={onDeleteProfile}
           >
             Delete profile
@@ -265,21 +264,21 @@ export function FormatPage({
         <div className="mt-4 flex flex-wrap gap-2">
           <button
             type="button"
-            className="rounded bg-[var(--accent)] px-3 py-1.5 text-sm text-white hover:bg-[var(--accent-hover)]"
+            className="rounded bg-[var(--accent)] px-3 py-1.5 text-sm text-[#12161c] hover:bg-[var(--accent-hover)]"
             onClick={onSaveAndTest}
           >
             Save and test print
           </button>
           <button
             type="button"
-            className="rounded border border-[var(--border)] bg-white px-3 py-1.5 text-sm"
+            className="rounded border border-[var(--border)] bg-[var(--btn)] px-3 py-1.5 text-sm"
             onClick={onSave}
           >
             Save format
           </button>
           <button
             type="button"
-            className="rounded border border-[var(--border)] bg-white px-3 py-1.5 text-sm"
+            className="rounded border border-[var(--border)] bg-[var(--btn)] px-3 py-1.5 text-sm"
             onClick={onReset}
           >
             Reset to defaults

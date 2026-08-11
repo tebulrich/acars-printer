@@ -223,6 +223,39 @@ def test_test_page_empty_registration_omits_dashes():
     assert "----" not in header
 
 
+def test_pdc_prints_wrapped_not_one_word_per_line():
+    """Clearance values wrapped in @ on the wire must wrap at column width."""
+    out = ThermalMessageFormatter().format(
+        _msg(
+            callsign="DLH4MC",
+            sender="EDDF",
+            message_type="cpdlc",
+            normalized_body=(
+                "CLD 1552 260811 EDDF PDC 010 DLH4MCCLRD TO EDDM OFF 18 VIA "
+                "CINDY8S SQUAWK 1000 NEXT FREQ 121.855 ATIS F REPORT TOBT AT "
+                "VATS.IM|VDGS REPORT READY ON 121.855 ACC TSAT"
+            ),
+            received_at="2026-08-11T15:53:17+00:00",
+        ),
+        PrinterSettings(
+            "console",
+            paper_width="80",
+            aircraft_registration="D-AILA",
+        ),
+    )
+    body_lines = [
+        line
+        for line in out.splitlines()
+        if line
+        and not line.startswith("ACARS")
+        and not line.startswith("=")
+        and not line.startswith("-")
+        and "D-AILA" not in line
+    ]
+    assert all(len(line) > 3 for line in body_lines), body_lines
+    assert "EDDM OFF 18 VIA CINDY8S" in " ".join(body_lines)
+
+
 def test_body_forced_uppercase():
     out = ThermalMessageFormatter().format(
         _msg(normalized_body="climb to fl360"),

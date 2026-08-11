@@ -134,6 +134,15 @@ def test_disable_require_powered_flushes_queue() -> None:
     assert not gate.is_blocking
 
 
+def test_tick_does_not_spam_electrical_buses(powered_runtime) -> None:
+    rt, fake, _clock = powered_runtime
+    fake.set(_live())
+    rt.tick()
+    rt.tick()
+    text = rt.debug.text()
+    assert "electrical_buses" not in text
+
+
 def test_rebuild_printer_keeps_outbound_session(tmp_path: Path) -> None:
     session = build_session(AppPaths.for_testing(tmp_path), use_fake_printer=True)
     assert session.outbound._session is session

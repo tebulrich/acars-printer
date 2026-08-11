@@ -1,16 +1,23 @@
 @import "tailwindcss";
 
 :root {
-  --bg: #f5f6f8;
-  --surface: #ffffff;
-  --border: #d8dbe0;
-  --text: #1b1f24;
-  --muted: #5c6570;
-  --accent: #2b5ea7;
-  --accent-hover: #244f8d;
-  --success: #1f8f4e;
-  --danger: #c0392b;
-  --warn: #b7791f;
+  --bg: #12161c;
+  --surface: #1a212b;
+  --surface-alt: #222b38;
+  --border: #2f3b4d;
+  --text: #e8eef7;
+  --muted: #9aa8bc;
+  --accent: #3dd6c6;
+  --accent-hover: #2a9d8f;
+  --success: #80ed99;
+  --danger: #e76f51;
+  --warn: #f4a261;
+  --input: #161c24;
+  --btn: #222b38;
+  --selected: #243041;
+  --toast-error-bg: #3a2420;
+  --mono-bg: #0f1720;
+  --mono-fg: #d7e0ea;
 }
 
 html,
@@ -32,6 +39,7 @@ input,
 select,
 textarea {
   font: inherit;
+  color: inherit;
 }
 
 button {
@@ -45,4 +53,23 @@ button:disabled {
 
 * {
   box-sizing: border-box;
+}
+
+.inp {
+  border-radius: 0.25rem;
+  border: 1px solid var(--border);
+  background: var(--input);
+  color: var(--text);
+  padding: 0.375rem 0.5rem;
+  outline: none;
+}
+
+.inp:focus {
+  border-color: var(--accent);
+}
+
+.inp:disabled {
+  cursor: not-allowed;
+  background: var(--bg);
+  color: var(--muted);
 }

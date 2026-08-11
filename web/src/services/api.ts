@@ -148,21 +148,10 @@ export function companionStatus() {
     station_enabled: boolean;
     port: number;
     url?: string;
-    token?: string;
     server_running?: boolean;
     station_polling?: boolean;
     station_error?: string | null;
   }>("companion_status");
-}
-
-export function companionRotateToken() {
-  return bridge<{
-    enabled: boolean;
-    station_enabled: boolean;
-    port: number;
-    url?: string;
-    token?: string;
-  }>("companion_rotate_token");
 }
 
 export function drainEvents() {
@@ -192,7 +181,14 @@ export async function onBridgeEvent(
 export function chipTone(text: string | null | undefined): string {
   const t = (text ?? "").toLowerCase();
   if (!t) return "text-[var(--muted)]";
-  if (t.includes("issue") || t.includes("fail")) return "text-[var(--danger)]";
+  if (
+    t.includes("issue") ||
+    t.includes("fail") ||
+    t.includes("reject") ||
+    t.includes("in use")
+  ) {
+    return "text-[var(--danger)]";
+  }
   if (t.includes("ok") || t.includes("on") || t.includes("seen")) return "text-[var(--success)]";
   if (t.includes("…") || t.includes("waiting") || t.includes("q")) return "text-[var(--accent)]";
   return "text-[var(--muted)]";

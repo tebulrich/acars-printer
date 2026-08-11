@@ -10,6 +10,21 @@ _DATA2_RE = re.compile(
 )
 
 
+def expand_cpdlc_at_marks(text: str) -> str:
+    """Turn Hoppie ``@`` markers into printable text for a thermal strip.
+
+    Aircraft CDUs treat ``@`` as a wrap. VATSIM PDC also wraps fill-in values
+    (``@EDDM@``, ``@18@``). Expanding every ``@`` to a newline prints one
+    word per row. Use a space and let the formatter wrap at column width.
+    ``@@`` stays a paragraph break.
+    """
+    if not text:
+        return ""
+    expanded = text.replace("@@", "\n").replace("@", " ")
+    lines = [re.sub(r"[ \t]{2,}", " ", line).strip() for line in expanded.split("\n")]
+    return "\n".join(lines)
+
+
 @dataclass(frozen=True, slots=True)
 class CpdlcPacket:
     min: int | None
@@ -19,10 +34,10 @@ class CpdlcPacket:
 
     @property
     def display_text(self) -> str:
-        return self.text.replace("@", "\n")
+        return expand_cpdlc_at_marks(self.text)
 
     def requires_reply(self) -> bool:
-        return self.ra.upper() in {"WU", "AN", "R", "Y"}
+        return bool(reply_choices(self.ra))
 
     def encode(self) -> str:
         min_s = "" if self.min is None else str(self.min)
@@ -54,7 +69,23 @@ class CpdlcPacket:
         reply: str,
     ) -> CpdlcPacket:
         text = reply.strip().upper()
-        allowed = {"WILCO", "ROGER", "UNABLE", "STANDBY"}
+        allowed = {"WILCO", "ROGER", "UNABLE", "STANDBY", "AFFIRM", "NEGATIVE"}
         if text not in allowed:
-            raise ValueError(f"Unsupported CPDLC reply {reply!r}; use one of {sorted(allowed)}")
+            raise ValueError(
+                f"Unsupported CPDLC reply {reply!r}; use one of {sorted(allowed)}"
+            )
         return cls(min=our_min, mrn=uplink_min, ra="N", text=text)
+
+
+def reply_choices(ra: str | None) -> list[str]:
+    """Standard downlink replies for a Hoppie CPDLC RA code."""
+    code = (ra or "").strip().upper()
+    if code == "WU":
+        return ["WILCO", "UNABLE", "STANDBY"]
+    if code == "AN":
+        return ["AFFIRM", "NEGATIVE", "STANDBY"]
+    if code == "R":
+        return ["ROGER", "STANDBY"]
+    if code == "Y":
+        return ["WILCO", "ROGER", "UNABLE", "STANDBY", "AFFIRM", "NEGATIVE"]
+    return []

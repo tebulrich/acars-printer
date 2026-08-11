@@ -3,12 +3,13 @@ import { chipTone, isElevationError, mergeStatus } from "./api";
 import type { BridgeStatus } from "../types";
 
 describe("chipTone", () => {
-  it("marks link ok as success", () => {
-    expect(chipTone("LINK ok · 12:00Z")).toContain("success");
+  it("marks hoppie ok as success", () => {
+    expect(chipTone("Hoppie ok · DLH4MC")).toContain("success");
   });
 
   it("marks errors as danger", () => {
     expect(chipTone("LINK issue · 12:00Z")).toContain("danger");
+    expect(chipTone("Hoppie rejected logon")).toContain("danger");
   });
 
   it("marks idle as muted", () => {

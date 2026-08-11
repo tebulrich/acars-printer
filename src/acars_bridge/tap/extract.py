@@ -3,7 +3,7 @@ from __future__ import annotations
 import json
 from urllib.parse import parse_qs
 
-from acars_bridge.hoppie.cpdlc import CpdlcPacket
+from acars_bridge.hoppie.cpdlc import CpdlcPacket, expand_cpdlc_at_marks
 from acars_bridge.hoppie.parser import parse_response
 from acars_bridge.hoppie.sanitize import scrub_message_body
 from acars_bridge.hoppie.types import HoppieMessage, MessageType
@@ -214,7 +214,7 @@ def _gfo_decode_body(
             pass
     if declared is MessageType.CPDLC:
         # CPDLC without a parseable envelope — still expand @ line breaks.
-        cleaned = scrub_message_body(packet.replace("@", "\n"))
+        cleaned = scrub_message_body(expand_cpdlc_at_marks(packet))
         return declared, cleaned, None, None, None
     return declared, scrub_message_body(packet), None, None, None
 

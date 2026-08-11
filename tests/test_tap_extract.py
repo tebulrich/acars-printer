@@ -206,7 +206,7 @@ def test_gfo_cpdlc_multiline_at_breaks():
         response_text=payload,
         callsign_filter="GEC8851",
     )
-    assert messages[0].normalized_body == "CLIMB TO AND MAINTAIN\nFL360"
+    assert messages[0].normalized_body == "CLIMB TO AND MAINTAIN FL360"
 
 
 def test_scrub_message_body_pmdg_variants():

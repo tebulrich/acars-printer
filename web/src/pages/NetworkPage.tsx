@@ -2,8 +2,7 @@ import type { ReactNode } from "react";
 import { useState } from "react";
 import type { Settings } from "../types";
 
-const inputClass =
-  "rounded border border-[var(--border)] bg-white px-2 py-1.5 text-sm outline-none focus:border-[var(--accent)] disabled:cursor-not-allowed disabled:bg-[var(--bg)] disabled:text-[var(--muted)]";
+const inputClass = "inp text-sm";
 
 function Field({
   label,
@@ -29,6 +28,7 @@ interface Props {
   onSave: () => void;
   /** True when Connect/tap is watching (hook mode). */
   tapConnected?: boolean;
+  onOpenCompanion: () => void;
 }
 
 export function NetworkPage({
@@ -36,6 +36,7 @@ export function NetworkPage({
   onChange,
   onSave,
   tapConnected = false,
+  onOpenCompanion,
 }: Props) {
   const [logonDraft, setLogonDraft] = useState("");
   const stationOn = settings.companion_station_enabled;
@@ -168,9 +169,75 @@ export function NetworkPage({
         </div>
       </section>
 
+      <section className="rounded border border-[var(--border)] bg-[var(--surface)] p-4">
+        <h2 className="mb-1 text-sm font-semibold text-[var(--text)]">Phone companion</h2>
+        <p className="mb-3 text-sm text-[var(--muted)]">
+          Open a page on your phone (same Wi‑Fi) to read the inbox, reprint, and
+          reply WILCO. Anyone on the LAN can open the URL.
+        </p>
+        <div className="grid max-w-xl gap-3">
+          <label className="grid gap-1 text-sm">
+            <span className="flex items-center gap-2">
+              <input
+                type="checkbox"
+                checked={settings.companion_enabled}
+                onChange={(e) => onChange({ companion_enabled: e.target.checked })}
+              />
+              Let my phone show the message inbox
+            </span>
+            <span className="pl-6 text-xs text-[var(--muted)]">
+              Starts a local page on your Wi‑Fi. Copy the URL after saving.
+              Phone sends need Connect (after one Hoppie exchange) or station
+              mode above.
+            </span>
+          </label>
+          <Field
+            label="Port number"
+            hint="Usually leave at 8765 unless something else on your PC already uses it."
+          >
+            <input
+              type="number"
+              min={1024}
+              max={65535}
+              className={inputClass}
+              value={settings.companion_port}
+              onChange={(e) => onChange({ companion_port: Number(e.target.value) })}
+            />
+          </Field>
+          {settings.companion_enabled && settings.companion_url && (
+            <div className="rounded border border-[var(--border)] bg-[var(--bg)] p-3 text-sm">
+              <div className="mb-1 text-xs uppercase tracking-wide text-[var(--muted)]">
+                Phone URL
+              </div>
+              <code className="break-all text-[13px]">{settings.companion_url}</code>
+            </div>
+          )}
+        </div>
+        <div className="mt-3 flex flex-wrap gap-2">
+          {settings.companion_url && (
+            <button
+              type="button"
+              className="rounded border border-[var(--border)] bg-[var(--btn)] px-3 py-1.5 text-sm"
+              onClick={() => void navigator.clipboard.writeText(settings.companion_url)}
+            >
+              Copy URL
+            </button>
+          )}
+          {settings.companion_url && (
+            <button
+              type="button"
+              className="rounded border border-[var(--border)] bg-[var(--btn)] px-3 py-1.5 text-sm"
+              onClick={onOpenCompanion}
+            >
+              Open in browser
+            </button>
+          )}
+        </div>
+      </section>
+
       <button
         type="button"
-        className="rounded bg-[var(--accent)] px-3 py-1.5 text-sm text-white hover:bg-[var(--accent-hover)]"
+        className="rounded bg-[var(--accent)] px-3 py-1.5 text-sm text-[#12161c] hover:bg-[var(--accent-hover)]"
         onClick={() => {
           onSave();
           setLogonDraft("");

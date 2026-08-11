@@ -1856,25 +1856,8 @@ class AcarsBridgeApp(QMainWindow):
             now_sterile = self.session.sterile.is_sterile
             now_unpowered = self.session.sterile.is_unpowered
             now_powered = self.session.sterile.battery_on
-            from acars_bridge.simconnect.monitor import (
-                SimSnapshot as _Snap,
-                aircraft_is_powered,
-            )
+            from acars_bridge.simconnect.monitor import SimSnapshot as _Snap
 
-            if isinstance(snap, _Snap) and snap.connected:
-                elec = dict(snap.electrical or {})
-                # Always log — even when the dict is empty — so missing SimVars are obvious.
-                self.debug.info(
-                    "electrical_buses",
-                    decision_powered=aircraft_is_powered(snap),
-                    gate_blocking=now_blocking,
-                    gate_require_powered=self.session.sterile.require_powered,
-                    snap_battery_on=snap.battery_on,
-                    snap_main_bus=snap.main_bus_voltage,
-                    snap_ext=snap.external_power_on,
-                    snap_apu=snap.apu_generator_on,
-                    **elec,
-                )
             if was_powered != now_powered or was_unpowered != now_unpowered:
                 self.debug.info(
                     "power_gate",

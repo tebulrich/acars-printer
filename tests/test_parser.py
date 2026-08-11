@@ -3,7 +3,11 @@ from __future__ import annotations
 import pytest
 
 from acars_bridge.hoppie.errors import CallsignInUseError, HoppieError
-from acars_bridge.hoppie.parser import parse_response
+from acars_bridge.hoppie.parser import (
+    hoppie_error_detail,
+    hoppie_error_label,
+    parse_response,
+)
 from acars_bridge.hoppie.types import MessageType
 
 
@@ -47,3 +51,14 @@ def test_malformed_and_errors(fixture_text):
         parse_response(fixture_text("error_logon.txt"), "SWR14")
     with pytest.raises(CallsignInUseError):
         parse_response(fixture_text("callsign_in_use.txt"), "SWR14")
+
+
+def test_hoppie_error_detail_and_label():
+    assert hoppie_error_detail("ok") is None
+    assert hoppie_error_detail("ok {SERVER telex {hi}}") is None
+    detail = hoppie_error_detail("error {invalid logon code}")
+    assert detail is not None
+    assert "invalid logon" in detail.lower()
+    assert hoppie_error_label(detail) == "Hoppie rejected logon"
+    assert hoppie_error_label("logon code not accepted") == "Hoppie rejected logon"
+    assert hoppie_error_label("callsign already in use") == "Hoppie callsign in use"
