@@ -1,11 +1,15 @@
 use serde_json::{json, Value};
+use std::fs::OpenOptions;
 use std::io::{BufRead, BufReader, Write};
 use std::path::{Path, PathBuf};
 use std::process::{Child, ChildStdin, ChildStdout, Command, Stdio};
 use std::sync::Mutex;
+use std::time::{SystemTime, UNIX_EPOCH};
 use tauri::{AppHandle, Emitter};
 use thiserror::Error;
 
+#[cfg(windows)]
+use std::os::windows::ffi::OsStrExt;
 #[cfg(windows)]
 use std::os::windows::process::CommandExt;
 
@@ -36,25 +40,57 @@ struct SidecarInner {
 pub struct BridgeSidecar {
     inner: Mutex<Option<SidecarInner>>,
     root: PathBuf,
+    log_path: PathBuf,
     app: Mutex<Option<AppHandle>>,
 }
 
 impl BridgeSidecar {
     pub fn start() -> Result<Self, BridgeError> {
+        let exe_dir = exe_directory();
+        let log_path = exe_dir
+            .as_ref()
+            .map(|d| d.join("acars-print-bridge.log"))
+            .unwrap_or_else(|| PathBuf::from("acars-print-bridge.log"));
+        startup_log(
+            &log_path,
+            &format!(
+                "launch exe_dir={} cwd={}",
+                exe_dir
+                    .as_ref()
+                    .map(|p| p.display().to_string())
+                    .unwrap_or_else(|| "(unknown)".into()),
+                std::env::current_dir()
+                    .map(|p| p.display().to_string())
+                    .unwrap_or_else(|_| "(unknown)".into())
+            ),
+        );
+
         let root = project_root();
-        if !root.join("src").join("acars_bridge").is_dir() {
-            return Err(BridgeError::Message(format!(
-                "acars_bridge package not found under {}",
-                root.display()
-            )));
-        }
+        startup_log(&log_path, &format!("project_root={}", root.display()));
+
         let sidecar = Self {
             inner: Mutex::new(None),
             root,
+            log_path: log_path.clone(),
             app: Mutex::new(None),
         };
-        sidecar.ensure_running()?;
-        Ok(sidecar)
+        match sidecar.ensure_running() {
+            Ok(()) => {
+                startup_log(&log_path, "bridge ready");
+                Ok(sidecar)
+            }
+            Err(err) => {
+                startup_log(&log_path, &format!("bridge start FAILED: {err}"));
+                show_fatal(
+                    "ACARS Print Bridge",
+                    &format!(
+                        "{err}\n\nA log was written next to the app:\n{}",
+                        log_path.display()
+                    ),
+                );
+                Err(err)
+            }
+        }
     }
 
     pub fn set_app(&self, app: AppHandle) {
@@ -76,7 +112,7 @@ impl BridgeSidecar {
                 }
             }
         }
-        *guard = Some(spawn_sidecar(&self.root)?);
+        *guard = Some(spawn_sidecar(&self.root, &self.log_path)?);
         Ok(())
     }
 
@@ -173,6 +209,12 @@ impl Drop for BridgeSidecar {
     }
 }
 
+fn exe_directory() -> Option<PathBuf> {
+    std::env::current_exe()
+        .ok()
+        .and_then(|p| p.parent().map(|d| d.to_path_buf()))
+}
+
 fn project_root() -> PathBuf {
     if let Ok(root) = std::env::var("ACARS_BRIDGE_ROOT") {
         return PathBuf::from(root);
@@ -183,15 +225,13 @@ fn project_root() -> PathBuf {
             return parent.to_path_buf();
         }
     }
-    if let Ok(exe) = std::env::current_exe() {
-        if let Some(dir) = exe.parent() {
-            if dir.join("src").join("acars_bridge").is_dir() {
-                return dir.to_path_buf();
-            }
-            if let Some(parent) = dir.parent() {
-                if parent.join("src").join("acars_bridge").is_dir() {
-                    return parent.to_path_buf();
-                }
+    if let Some(dir) = exe_directory() {
+        if dir.join("src").join("acars_bridge").is_dir() {
+            return dir;
+        }
+        if let Some(parent) = dir.parent() {
+            if parent.join("src").join("acars_bridge").is_dir() {
+                return parent.to_path_buf();
             }
         }
     }
@@ -201,23 +241,30 @@ fn project_root() -> PathBuf {
         .unwrap_or(manifest)
 }
 
-fn configure_no_console(cmd: &mut Command) {
-    cmd.stdin(Stdio::piped())
-        .stdout(Stdio::piped())
-        .stderr(Stdio::piped());
+fn bundled_sidecar_candidates() -> Vec<PathBuf> {
+    let mut out = Vec::new();
+    let Some(dir) = exe_directory() else {
+        return out;
+    };
+    out.push(dir.join("acars-bridge.exe"));
+    out.push(dir.join("acars-bridge"));
+    // Dev / odd layouts may keep the target-triple suffix.
     #[cfg(windows)]
     {
-        cmd.creation_flags(CREATE_NO_WINDOW);
+        out.push(dir.join("acars-bridge-x86_64-pc-windows-msvc.exe"));
     }
+    // Tauri sometimes places resources one level up from a nested install folder.
+    if let Some(parent) = dir.parent() {
+        out.push(parent.join("acars-bridge.exe"));
+    }
+    out
 }
 
-fn python_candidates() -> Vec<PathBuf> {
+fn python_candidates(root: &Path) -> Vec<PathBuf> {
     let mut out = Vec::new();
     if let Ok(custom) = std::env::var("ACARS_BRIDGE_PYTHON") {
         out.push(PathBuf::from(custom));
     }
-    // Prefer project venv.
-    let root = project_root();
     #[cfg(windows)]
     {
         out.push(root.join(".venv").join("Scripts").join("python.exe"));
@@ -234,57 +281,151 @@ fn python_candidates() -> Vec<PathBuf> {
     out
 }
 
-fn spawn_sidecar(root: &Path) -> Result<SidecarInner, BridgeError> {
+fn configure_no_console(cmd: &mut Command) {
+    cmd.stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped());
+    #[cfg(windows)]
+    {
+        cmd.creation_flags(CREATE_NO_WINDOW);
+    }
+}
+
+fn spawn_sidecar(root: &Path, log_path: &Path) -> Result<SidecarInner, BridgeError> {
     let mut last_err = String::new();
-    for py in python_candidates() {
-        let mut cmd = Command::new(&py);
-        cmd.args(["-m", "acars_bridge.bridge", "serve"])
-            .current_dir(root)
-            .env("PYTHONPATH", root.join("src"));
-        configure_no_console(&mut cmd);
-        match cmd.spawn() {
-            Ok(mut child) => {
-                let stdin = child.stdin.take().ok_or_else(|| {
-                    BridgeError::Message("Python bridge stdin unavailable".into())
-                })?;
-                let stdout = child.stdout.take().ok_or_else(|| {
-                    BridgeError::Message("Python bridge stdout unavailable".into())
-                })?;
-                let mut reader = BufReader::new(stdout);
-                let mut ready = String::new();
-                if let Err(err) = reader.read_line(&mut ready) {
-                    let _ = child.kill();
-                    last_err = format!("{}: failed ready handshake ({err})", py.display());
-                    continue;
-                }
-                match serde_json::from_str::<Value>(ready.trim()) {
-                    Ok(parsed) => match parse_bridge_response(&parsed) {
-                        Ok(_) => {
-                            return Ok(SidecarInner {
-                                child,
-                                stdin,
-                                stdout: reader,
-                            });
-                        }
-                        Err(err) => {
-                            let _ = child.kill();
-                            last_err = format!("{}: {err}", py.display());
-                        }
-                    },
-                    Err(err) => {
-                        let _ = child.kill();
-                        last_err = format!("{}: invalid ready JSON ({err}): {}", py.display(), ready.trim());
-                    }
-                }
-            }
+
+    for path in bundled_sidecar_candidates() {
+        if !path.is_file() {
+            continue;
+        }
+        startup_log(log_path, &format!("trying bundled sidecar {}", path.display()));
+        match spawn_process(&path, &[], root, log_path, /*bundled*/ true) {
+            Ok(inner) => return Ok(inner),
             Err(err) => {
-                last_err = format!("{}: {err}", py.display());
+                last_err = err;
+                startup_log(log_path, &format!("bundled sidecar failed: {last_err}"));
             }
         }
     }
+
+    let has_source = root.join("src").join("acars_bridge").is_dir();
+    if has_source {
+        for py in python_candidates(root) {
+            startup_log(log_path, &format!("trying python {}", py.display()));
+            match spawn_process(
+                &py,
+                &["-m", "acars_bridge.bridge", "serve"],
+                root,
+                log_path,
+                /*bundled*/ false,
+            ) {
+                Ok(inner) => return Ok(inner),
+                Err(err) => {
+                    last_err = err;
+                    startup_log(log_path, &format!("python launch failed: {last_err}"));
+                }
+            }
+        }
+    } else {
+        startup_log(
+            log_path,
+            &format!(
+                "no source tree at {} — release builds need acars-bridge.exe next to the app",
+                root.display()
+            ),
+        );
+    }
+
     Err(BridgeError::Message(format!(
-        "Could not launch Python bridge ({last_err}). Install Python 3.12+ or set ACARS_BRIDGE_PYTHON."
+        "Could not start the ACARS bridge ({last_err}). \
+Reinstall from GitHub Releases, or keep acars-bridge.exe next to ACARS-Print-Bridge.exe. \
+See acars-print-bridge.log next to the app."
     )))
+}
+
+fn spawn_process(
+    program: &Path,
+    args: &[&str],
+    root: &Path,
+    log_path: &Path,
+    bundled: bool,
+) -> Result<SidecarInner, String> {
+    let mut cmd = Command::new(program);
+    cmd.args(args);
+    if !bundled {
+        cmd.current_dir(root)
+            .env("PYTHONPATH", root.join("src"));
+    }
+    // Shared support log next to the desktop EXE (same folder as the sidecar).
+    cmd.env("ACARS_BRIDGE_EXE_LOG", log_path);
+    configure_no_console(&mut cmd);
+    let mut child = cmd
+        .spawn()
+        .map_err(|err| format!("{}: {err}", program.display()))?;
+    let stdin = child
+        .stdin
+        .take()
+        .ok_or_else(|| format!("{}: stdin unavailable", program.display()))?;
+    let stdout = child
+        .stdout
+        .take()
+        .ok_or_else(|| format!("{}: stdout unavailable", program.display()))?;
+    let mut stderr = child.stderr.take();
+    let mut reader = BufReader::new(stdout);
+    let mut ready = String::new();
+    if let Err(err) = reader.read_line(&mut ready) {
+        let _ = child.kill();
+        let err_tail = read_stderr_tail(&mut stderr);
+        return Err(format!(
+            "{}: failed ready handshake ({err}){err_tail}",
+            program.display()
+        ));
+    }
+    match serde_json::from_str::<Value>(ready.trim()) {
+        Ok(parsed) => match parse_bridge_response(&parsed) {
+            Ok(_) => Ok(SidecarInner {
+                child,
+                stdin,
+                stdout: reader,
+            }),
+            Err(err) => {
+                let _ = child.kill();
+                let err_tail = read_stderr_tail(&mut stderr);
+                Err(format!("{err}{err_tail}"))
+            }
+        },
+        Err(err) => {
+            let _ = child.kill();
+            let err_tail = read_stderr_tail(&mut stderr);
+            Err(format!(
+                "{}: invalid ready JSON ({err}): {}{err_tail}",
+                program.display(),
+                ready.trim()
+            ))
+        }
+    }
+}
+
+fn read_stderr_tail(stderr: &mut Option<std::process::ChildStderr>) -> String {
+    let Some(err) = stderr.take() else {
+        return String::new();
+    };
+    let mut reader = BufReader::new(err);
+    let mut buf = String::new();
+    for _ in 0..20 {
+        let mut line = String::new();
+        match reader.read_line(&mut line) {
+            Ok(0) => break,
+            Ok(_) => buf.push_str(&line),
+            Err(_) => break,
+        }
+    }
+    let trimmed = buf.trim();
+    if trimmed.is_empty() {
+        String::new()
+    } else {
+        format!(" | stderr: {trimmed}")
+    }
 }
 
 fn parse_bridge_response(parsed: &Value) -> Result<Value, BridgeError> {
@@ -297,5 +438,56 @@ fn parse_bridge_response(parsed: &Value) -> Result<Value, BridgeError> {
             .and_then(|v| v.as_str())
             .unwrap_or("Bridge command failed");
         Err(BridgeError::Message(msg.to_string()))
+    }
+}
+
+fn startup_log(path: &Path, message: &str) {
+    let stamp = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|d| d.as_secs())
+        .unwrap_or(0);
+    let line = format!("[{stamp}] {message}\n");
+    if let Some(parent) = path.parent() {
+        let _ = std::fs::create_dir_all(parent);
+    }
+    if let Ok(mut file) = OpenOptions::new().create(true).append(true).open(path) {
+        let _ = file.write_all(line.as_bytes());
+        let _ = file.flush();
+    }
+}
+
+fn show_fatal(title: &str, message: &str) {
+    #[cfg(windows)]
+    {
+        fn wide(s: &str) -> Vec<u16> {
+            std::ffi::OsStr::new(s)
+                .encode_wide()
+                .chain(std::iter::once(0))
+                .collect()
+        }
+        #[link(name = "user32")]
+        extern "system" {
+            fn MessageBoxW(
+                hwnd: *mut core::ffi::c_void,
+                text: *const u16,
+                caption: *const u16,
+                flags: u32,
+            ) -> i32;
+        }
+        const MB_ICONERROR: u32 = 0x0000_0010;
+        let text = wide(message);
+        let caption = wide(title);
+        unsafe {
+            MessageBoxW(
+                std::ptr::null_mut(),
+                text.as_ptr(),
+                caption.as_ptr(),
+                MB_ICONERROR,
+            );
+        }
+    }
+    #[cfg(not(windows))]
+    {
+        eprintln!("{title}: {message}");
     }
 }

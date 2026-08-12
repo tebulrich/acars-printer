@@ -249,6 +249,18 @@ def test_debug_log_commands(runtime: BridgeRuntime) -> None:
     _ok(runtime, "debug_clear")
     folder = _ok(runtime, "debug_folder")
     assert Path(folder["path"]).exists() or folder["path"]
+    assert "log" in folder
+    assert Path(folder["log"]).name
+
+
+def test_debug_folder_points_at_exe_log(
+    runtime: BridgeRuntime, tmp_path: Path
+) -> None:
+    target = tmp_path / "portable" / "acars-print-bridge.log"
+    runtime.debug.path = target
+    folder = _ok(runtime, "debug_folder")
+    assert folder["path"] == str(target.parent)
+    assert folder["log"] == str(target)
 
 
 def test_quit_shuts_down(runtime: BridgeRuntime) -> None:

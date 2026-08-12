@@ -61,10 +61,16 @@ already knows about.
 ### 3. Download and start the app
 
 1. Get the latest Windows build from
-   [Releases](https://github.com/tebulrich/acars-printer/releases)
-   (`ACARS-Print-Bridge-*-windows-x64.exe`).
-2. Run it. Windows will ask for **Administrator** (UAC) when the app starts —
+   [Releases](https://github.com/tebulrich/acars-printer/releases).
+   Prefer the **setup** installer, or the **portable zip**
+   (`ACARS-Print-Bridge-*-windows-x64.zip`) which contains both EXEs.
+2. If you unpack the portable zip, keep **`ACARS-Print-Bridge.exe` and
+   `acars-bridge.exe` in the same folder**.
+3. Run the app. Windows will ask for **Administrator** (UAC) when it starts —
    accept that prompt. Without elevation Connect cannot intercept ACARS traffic.
+
+If the app fails to open, check **`acars-print-bridge.log`** next to the EXE and
+send that file when asking for help.
 
 Close other copies of the app first. Only one instance should run. Closing the
 window fully quits the app.

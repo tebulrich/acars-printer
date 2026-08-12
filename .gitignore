@@ -49,6 +49,12 @@ node_modules/
 dist/
 dist-windows/
 src-tauri/target/
+src-tauri/binaries/*.exe
+!src-tauri/binaries/.gitkeep
 web/dist/
 *.tsbuildinfo
+
+# PyInstaller
+build/
+*.spec.bak
 

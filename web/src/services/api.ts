@@ -116,7 +116,7 @@ export function debugClear() {
 }
 
 export function debugFolder() {
-  return bridge<{ path: string }>("debug_folder");
+  return bridge<{ path: string; log?: string }>("debug_folder");
 }
 
 export function checkUpdates(manual = true) {

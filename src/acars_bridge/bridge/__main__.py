@@ -59,6 +59,9 @@ def _build_runtime(*, data_dir: str | None = None, fake_printer: bool = False) -
 
 
 def serve() -> int:
+    from acars_bridge.native_runtime import prepare_frozen_natives
+
+    prepare_frozen_natives()
     isolate_protocol_stdout()
     data_dir = os.environ.get("ACARS_BRIDGE_DATA_DIR")
     fake = os.environ.get("ACARS_BRIDGE_FAKE_PRINTER", "").strip() in {"1", "true", "yes"}
@@ -78,7 +81,7 @@ def serve() -> int:
         _emit(_err(f"Failed to start bridge: {exc}\n{traceback.format_exc(limit=4)}"))
         return 1
 
-    _emit(_ok({"ready": True}))
+    _emit(_ok({"ready": True, "log": str(runtime.debug.path)}))
 
     try:
         for raw in sys.stdin:

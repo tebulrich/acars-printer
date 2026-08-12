@@ -3,7 +3,7 @@ setlocal EnableExtensions
 cd /d "%~dp0"
 
 echo.
-echo === ACARS Print Bridge — Tauri Windows build ===
+echo === ACARS Print Bridge — Tauri + Python sidecar Windows build ===
 echo.
 
 where node >nul 2>&1
@@ -24,15 +24,15 @@ if errorlevel 1 (
   goto :fail
 )
 
-if exist ".venv\Scripts\python.exe" (
-  set "ACARS_BRIDGE_PYTHON=%CD%\.venv\Scripts\python.exe"
-) else (
-  where python >nul 2>&1
+if not exist ".venv\Scripts\python.exe" (
+  echo Syncing Python env ^(uv sync --group dev^)...
+  where uv >nul 2>&1
   if errorlevel 1 (
-    echo WARNING: Python not found. The built EXE needs Python 3.12+ at runtime.
-    echo          Run "uv sync --group dev" first, or set ACARS_BRIDGE_PYTHON.
-    echo.
+    echo ERROR: uv not found. Install uv, then run "uv sync --group dev".
+    goto :fail
   )
+  call uv sync --group dev
+  if errorlevel 1 goto :fail
 )
 
 if not exist "node_modules\" (
@@ -45,7 +45,7 @@ if not exist "node_modules\" (
   echo.
 )
 
-echo Building Tauri release ^(this can take several minutes^)...
+echo Building ^(Python sidecar + Tauri^) — this can take several minutes...
 call npm run build:exe
 if errorlevel 1 (
   echo.
@@ -57,14 +57,17 @@ echo.
 echo Done.
 if exist "dist\ACARS-Print-Bridge.exe" (
   echo EXE:       %CD%\dist\ACARS-Print-Bridge.exe
-) else (
-  echo Check:     %CD%\src-tauri\target\release\acars-print-bridge.exe
+)
+if exist "dist\acars-bridge.exe" (
+  echo Sidecar:   %CD%\dist\acars-bridge.exe
 )
 for %%F in ("dist\*setup.exe") do (
   echo Installer: %%~fF
 )
+echo Log file:  acars-print-bridge.log ^(created next to the EXE on first run^)
 echo.
 echo Run the EXE elevated ^(Administrator^) for Connect.
+echo Keep acars-bridge.exe beside ACARS-Print-Bridge.exe for the portable build.
 echo.
 pause
 exit /b 0

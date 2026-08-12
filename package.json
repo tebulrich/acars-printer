@@ -1,7 +1,7 @@
 {
   "name": "acars-print-bridge",
   "private": true,
-  "version": "1.2.11",
+  "version": "1.2.12",
   "type": "module",
   "scripts": {
     "dev": "vite",
@@ -10,7 +10,9 @@
     "tauri": "tauri",
     "test": "vitest run",
     "test:watch": "vitest",
-    "build:exe": "tauri build && node scripts/copy-release.mjs"
+    "build:exe": "node scripts/build-exe.mjs",
+    "build:sidecar": "uv run pyinstaller --noconfirm --clean packaging/acars-bridge-sidecar.spec && node scripts/stage-sidecar.mjs",
+    "build:tauri-only": "tauri build && node scripts/copy-release.mjs"
   },
   "dependencies": {
     "@tauri-apps/api": "^2",

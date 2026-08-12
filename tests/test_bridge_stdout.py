@@ -26,3 +26,14 @@ def test_isolate_protocol_stdout_keeps_ndjson_clean():
     payload = json.loads(lines[0])
     assert payload["ok"] is True
     assert "media.width" in noise.getvalue()
+
+
+def test_debug_log_path_prefers_exe_log_env(tmp_path, monkeypatch):
+    from acars_bridge.bridge.runtime import _debug_log_path
+
+    target = tmp_path / "next-to-exe" / "acars-print-bridge.log"
+    monkeypatch.setenv("ACARS_BRIDGE_EXE_LOG", str(target))
+    assert _debug_log_path(tmp_path / "fallback") == target
+
+    monkeypatch.delenv("ACARS_BRIDGE_EXE_LOG", raising=False)
+    assert _debug_log_path(tmp_path / "fallback") == tmp_path / "fallback" / "debug.log"

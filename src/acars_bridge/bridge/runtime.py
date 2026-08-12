@@ -31,6 +31,21 @@ def _err(message: str) -> dict[str, Any]:
     return {"ok": False, "error": message}
 
 
+def _debug_log_path(fallback_root: Path) -> Path:
+    """Prefer the support log next to the desktop EXE when the shell provides it."""
+    import os
+
+    raw = (os.environ.get("ACARS_BRIDGE_EXE_LOG") or "").strip()
+    if raw:
+        path = Path(raw)
+        try:
+            path.parent.mkdir(parents=True, exist_ok=True)
+            return path
+        except OSError:
+            pass
+    return fallback_root / "debug.log"
+
+
 @dataclass
 class FakeTapService:
     """In-process tap stand-in for unit tests (no Admin / WinDivert)."""
@@ -101,7 +116,7 @@ class BridgeRuntime:
         self._power_was_powered: bool | None = None
         self._last_simconnect_detail: str | None = None
         self.debug = debug or DebugLog(
-            session.paths.root / "debug.log",
+            _debug_log_path(session.paths.root),
             get_logon=session.settings.hoppie_logon,
             get_extra_logons=lambda: [
                 x
@@ -951,9 +966,14 @@ class BridgeRuntime:
         return _ok({"cleared": True})
 
     def cmd_debug_folder(self, _args: dict[str, Any]) -> dict[str, Any]:
-        path = self.session.paths.root
-        path.mkdir(parents=True, exist_ok=True)
-        return _ok({"path": str(path)})
+        """Open the folder that holds the support log (next to the EXE when packaged)."""
+        log = self.debug.path
+        folder = log.parent
+        try:
+            folder.mkdir(parents=True, exist_ok=True)
+        except OSError:
+            pass
+        return _ok({"path": str(folder), "log": str(log)})
 
     def cmd_check_updates(self, args: dict[str, Any]) -> dict[str, Any]:
         skipped = self.session.settings.skipped_update_version()
