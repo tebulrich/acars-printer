@@ -1,7 +1,7 @@
 {
   "name": "acars-print-bridge",
   "private": true,
-  "version": "1.3.5",
+  "version": "1.3.11",
   "type": "module",
   "scripts": {
     "dev": "vite",
@@ -11,7 +11,7 @@
     "test": "vitest run",
     "test:watch": "vitest",
     "build:exe": "node scripts/build-exe.mjs",
-    "build:sidecar": "uv run pyinstaller --noconfirm --clean packaging/acars-bridge-sidecar.spec && node scripts/stage-sidecar.mjs",
+    "build:sidecar": "uv run pyinstaller --noconfirm --clean --distpath build/sidecar-dist --workpath build/acars-bridge-sidecar packaging/acars-bridge-sidecar.spec && node scripts/stage-sidecar.mjs",
     "build:tauri-only": "tauri build && node scripts/copy-release.mjs"
   },
   "dependencies": {

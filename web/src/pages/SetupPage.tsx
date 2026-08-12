@@ -60,7 +60,7 @@ export function SetupPage(props: Props) {
           </button>
         ))}
       </div>
-      <div className="min-h-0 flex-1 overflow-auto pr-1">
+      <div className="min-h-0 flex-1 overflow-y-auto">
         {section === "printer" && (
           <FormatPage
             settings={props.settings}

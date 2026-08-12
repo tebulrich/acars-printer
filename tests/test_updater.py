@@ -95,9 +95,11 @@ def test_schedule_replace_uses_wait_pid(tmp_path, monkeypatch):
     current.write_bytes(b"old")
 
     launched: list[list[str]] = []
+    flags: list[int] = []
 
     def fake_popen(args, **kwargs):
         launched.append(list(args))
+        flags.append(int(kwargs.get("creationflags") or 0))
 
         class _P:
             pass
@@ -114,9 +116,18 @@ def test_schedule_replace_uses_wait_pid(tmp_path, monkeypatch):
         new_exe=new_exe, current_exe=current, wait_pid=999001
     )
     text = script.read_text(encoding="utf-8")
-    assert "set OLD_PID=999001" in text
+    assert script.suffix.lower() == ".ps1"
+    assert "Wait-Process -Id 999001 -Timeout 45" in text
+    assert "tasklist" not in text.lower()
+    assert " find " not in text.lower()
     assert launched
-    assert launched[0][0].lower().endswith("cmd.exe") or launched[0][0] == "cmd.exe"
+    assert launched[0][0].lower().endswith("powershell.exe") or launched[0][
+        0
+    ].lower() == "powershell.exe"
+    assert "-File" in launched[0]
+    assert str(script) in launched[0]
+    # CREATE_NO_WINDOW | DETACHED_PROCESS | CREATE_NEW_PROCESS_GROUP
+    assert flags and (flags[0] & 0x08000000) == 0x08000000
 
 
 def test_fetch_latest_release_mock():

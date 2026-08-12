@@ -200,6 +200,8 @@ def test_test_page_is_demo_pdc_strip():
     # Empty registration → no sample tail injected.
     assert lines[2] == "DLH4MC 04AUG 1809Z"
     assert "----" not in lines[2]
+    assert "FULL WIDTH" not in out
+    assert "----+----1" not in out
     assert "CLD 1807 260804 EDDF PDC 001" in out
     assert "CINDY8S SQUAWK 1000 NEXT FREQ" in out
     assert "TEST PRINT" not in out

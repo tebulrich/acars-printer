@@ -83,6 +83,44 @@ function eventToBinding(e: KeyboardEvent): string {
   return parts.join("+");
 }
 
+type UpdateCheckResult = Awaited<ReturnType<typeof checkUpdates>>;
+
+/** Ask to install (or open the release page). Shared by startup check and Setup. */
+async function promptUpdateInstall(
+  result: UpdateCheckResult,
+  notify: (message: string, error?: boolean) => void,
+): Promise<void> {
+  const release = result.release;
+  if (!release) return;
+
+  try {
+    if (result.can_install) {
+      const go = window.confirm(
+        `Version ${release.version} is available.\n\n` +
+          `Download and install now? The app will restart.`,
+      );
+      if (!go) return;
+      notify("Downloading update...");
+      const installed = await installUpdate();
+      notify(`Installing ${installed.version}... restarting`);
+      await quitApp();
+      return;
+    }
+
+    const go = window.confirm(
+      `Version ${release.version} is available.\n\nOpen the download page?`,
+    );
+    if (go && release.html_url) {
+      const { openUrl } = await import("@tauri-apps/plugin-opener");
+      await openUrl(release.html_url);
+    } else if (release.version) {
+      await skipUpdate(release.version);
+    }
+  } catch (err) {
+    notify(err instanceof Error ? err.message : String(err), true);
+  }
+}
+
 export default function App() {
   const [view, setView] = useState<AppView>("messages");
   const [meta, setMeta] = useState<Meta | null>(null);
@@ -147,11 +185,12 @@ export default function App() {
         }
         if (result.settings.check_updates) {
           window.setTimeout(() => {
-            void checkUpdates(false).then((r) => {
-              if (r.release) {
-                flash(`Update available: ${r.release.version}`);
-              }
-            });
+            void checkUpdates(false)
+              .then((r) => {
+                if (!r.release) return;
+                return promptUpdateInstall(r, flash);
+              })
+              .catch(() => undefined);
           }, 2500);
         }
       } catch (e) {
@@ -260,8 +299,8 @@ export default function App() {
   }
 
   return (
-    <div className="flex h-full flex-col">
-      <header className="border-b border-[var(--border)] bg-[var(--surface)] px-3 py-2">
+    <div className="flex h-full min-h-0 flex-col overflow-hidden">
+      <header className="shrink-0 border-b border-[var(--border)] bg-[var(--surface)] px-3 py-2">
         <div className="flex flex-wrap items-center gap-2">
           <div className="mr-2 flex items-baseline gap-2">
             <span className="text-sm font-semibold tracking-wide">ACARS PRINT BRIDGE</span>
@@ -359,12 +398,12 @@ export default function App() {
             )}
           </div>
         </div>
-        <nav className="mt-2 flex gap-3 overflow-x-auto">
+        <nav className="mt-2 flex gap-3">
           {NAV.map((item) => (
             <button
               key={item.id}
               type="button"
-              className={`-mb-px border-b-2 px-1 pb-1 text-sm ${
+              className={`border-b-2 px-1 pb-1 text-sm ${
                 view === item.id
                   ? "border-[var(--accent)] font-medium text-[var(--accent)]"
                   : "border-transparent text-[var(--muted)] hover:text-[var(--text)]"
@@ -377,11 +416,7 @@ export default function App() {
         </nav>
       </header>
 
-      <main
-        className={`relative min-h-0 flex-1 px-3 py-3 ${
-          view === "messages" ? "overflow-hidden" : "overflow-auto"
-        }`}
-      >
+      <main className="relative min-h-0 flex-1 overflow-hidden px-3 py-3">
         {booting && (
           <div className="pointer-events-none absolute inset-0 z-10 flex items-start justify-center bg-[color-mix(in_srgb,var(--bg)_70%,transparent)] pt-16">
             <div className="rounded border border-[var(--border)] bg-[var(--surface)] px-4 py-2 text-sm text-[var(--muted)] shadow-sm">
@@ -517,27 +552,7 @@ export default function App() {
                   flash("You're up to date");
                   return;
                 }
-                if (r.can_install) {
-                  const go = window.confirm(
-                    `Update ${r.release.version} is available.\n\n` +
-                      `Download and install now? The app will restart.`,
-                  );
-                  if (!go) return;
-                  flash("Downloading update…");
-                  const installed = await installUpdate();
-                  flash(`Installing ${installed.version}… restarting`);
-                  await quitApp();
-                  return;
-                }
-                const go = window.confirm(
-                  `Update ${r.release.version} available.\n\nOpen release page?`,
-                );
-                if (go && r.release.html_url) {
-                  const { openUrl } = await import("@tauri-apps/plugin-opener");
-                  await openUrl(r.release.html_url);
-                } else if (r.release.version) {
-                  await skipUpdate(r.release.version);
-                }
+                await promptUpdateInstall(r, flash);
               })
             }
             onOpenCompanion={() =>

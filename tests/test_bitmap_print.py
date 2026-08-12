@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import math
+
 from acars_bridge.printing.base import PrinterSettings
 from acars_bridge.printing.bitmap_render import (
     columns_for_bitmap,
@@ -21,16 +23,33 @@ def test_px_to_mm_203dpi():
     assert "1.0 mm" in mm_hint(8)
     assert paper_dot_width("80") == 576
     assert paper_dot_width("58") == 384
-    assert edge_inset_dots() == 12
-    assert usable_dot_width("80") == 576 - 24
+    # ~0.5 mm left safety; right inset spent so POS-80 can use the free ~3 mm.
+    assert edge_inset_dots() == 4
+    assert usable_dot_width("80") == 576 - 4
+    assert usable_dot_width("58") == 384 - 4
 
 
 def test_bitmap_columns_fit_usable_width():
     glyph_px = 28
     cols = columns_for_bitmap("80", glyph_px)
     assert 24 <= cols <= 64
-    char_w = measure_char_width(load_glyph_font(glyph_px))
-    assert cols * char_w <= usable_dot_width("80")
+    font = load_glyph_font(glyph_px)
+    usable = usable_dot_width("80")
+    line_w = float(font.getlength("-" * cols))
+    assert line_w <= usable
+    # Must not leave almost a full glyph empty on the right (the old ceil bug).
+    assert usable - line_w < float(font.getlength("M"))
+
+
+def test_bitmap_columns_pack_tighter_than_ceil_measure():
+    """ceil(advance) under-filled the row by several mm; pack from real advance."""
+    glyph_px = 28
+    font = load_glyph_font(glyph_px)
+    advance = float(font.getlength("M"))
+    ceil_cols = usable_dot_width("80") // max(4, int(math.ceil(advance)))
+    packed = columns_for_bitmap("80", glyph_px)
+    assert packed >= ceil_cols
+    assert float(font.getlength("-" * packed)) <= usable_dot_width("80")
 
 
 def test_render_receipt_bitmap_size():

@@ -25,6 +25,7 @@ body,
 #root {
   height: 100%;
   margin: 0;
+  overflow: hidden;
 }
 
 body {
@@ -32,6 +33,12 @@ body {
   background: var(--bg);
   color: var(--text);
   font-size: 14px;
+}
+
+/* Never paint a chrome scrollbar on the shell; pages scroll their own panes. */
+#root {
+  display: flex;
+  flex-direction: column;
 }
 
 button,

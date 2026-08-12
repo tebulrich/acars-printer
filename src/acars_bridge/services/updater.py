@@ -287,11 +287,9 @@ def schedule_windows_replace_and_restart(
 ) -> Path:
     """Write a helper script that replaces the running exe after this process exits.
 
-    Uses a stable LocalAppData TEMP for the relaunched PyInstaller onefile extract
-    (avoids ``Failed to load Python DLL …\\Temp\\_MEI…\\python312.dll`` when the
-    system TEMP on another drive is cleaned mid-start).
-
-    ``wait_pid`` should be the desktop shell PID when the bridge is a sidecar.
+    Waits for ``wait_pid`` (desktop shell) with a hard timeout, force-kills if
+    needed, replaces the EXE, then relaunches. Runs hidden (no console windows).
+    Avoids ``tasklist | find`` which can hang with a visible cmd window.
     """
     if sys.platform != "win32":
         raise UpdateError("Automatic install is only supported on Windows.")
@@ -300,7 +298,6 @@ def schedule_windows_replace_and_restart(
     if not new_exe.is_file():
         raise UpdateError("Downloaded updater file is missing.")
 
-    # Stage next to the running exe so the move stays on one volume when possible.
     staged = current_exe.with_name(current_exe.stem + ".new.exe")
     shutil.copy2(new_exe, staged)
     _unblock_windows_file(staged)
@@ -308,66 +305,95 @@ def schedule_windows_replace_and_restart(
 
     pid = int(wait_pid) if wait_pid is not None else shell_wait_pid()
     work_dir = current_exe.parent
-    # Stable extract dir — not D:\\Temp / %TEMP% which some cleaners wipe.
     local = Path(os.environ.get("LOCALAPPDATA") or tempfile.gettempdir())
-    pyi_tmp = local / "acars-bridge" / "acars-bridge" / "pyi-tmp"
+    app_data = local / "acars-bridge" / "acars-bridge"
+    pyi_tmp = app_data / "pyi-tmp"
     pyi_tmp.mkdir(parents=True, exist_ok=True)
+    log_file = app_data / "update-helper.log"
+    helper = Path(tempfile.gettempdir()) / "acars-bridge-update.ps1"
 
-    script = Path(tempfile.gettempdir()) / "acars-bridge-update.cmd"
-    # Wait for this PID to exit, retry replace, unblock MOTW, relaunch with safe TEMP.
-    script.write_text(
-        "\r\n".join(
+    def _ps_sq(path: Path | str) -> str:
+        return "'" + str(path).replace("'", "''") + "'"
+
+    helper.write_text(
+        "\n".join(
             [
-                "@echo off",
-                "setlocal EnableExtensions",
-                f'set "TARGET={current_exe}"',
-                f'set "STAGED={staged}"',
-                f'set "WORKDIR={work_dir}"',
-                f'set "PYITMP={pyi_tmp}"',
-                f"set OLD_PID={pid}",
-                f"timeout /t {max(1, wait_seconds)} /nobreak >nul",
-                ":waitpid",
-                'tasklist /FI "PID eq %OLD_PID%" 2>nul | find "%OLD_PID%" >nul',
-                "if not errorlevel 1 (",
-                "  timeout /t 1 /nobreak >nul",
-                "  goto waitpid",
-                ")",
-                "set /a tries=0",
-                ":retry",
-                "set /a tries+=1",
-                'move /Y "%STAGED%" "%TARGET%" >nul 2>&1',
-                "if not errorlevel 1 goto launch",
-                "if %tries% GEQ 45 (",
-                '  echo Update failed: could not replace "%TARGET%"',
-                "  echo Close all ACARS Print Bridge windows / Task Manager entries and try again.",
-                "  pause",
-                "  exit /b 1",
-                ")",
-                "timeout /t 1 /nobreak >nul",
-                "goto retry",
-                ":launch",
-                "timeout /t 2 /nobreak >nul",
-                "powershell -NoProfile -ExecutionPolicy Bypass -Command \"try { Unblock-File -LiteralPath '%TARGET%' -ErrorAction SilentlyContinue } catch {}\"",
-                'if not exist "%PYITMP%" mkdir "%PYITMP%" >nul 2>&1',
-                'set "TEMP=%PYITMP%"',
-                'set "TMP=%PYITMP%"',
-                'start "" /D "%WORKDIR%" "%TARGET%"',
-                'del "%~f0" >nul 2>&1',
+                "$ErrorActionPreference = 'SilentlyContinue'",
+                f"$Log = {_ps_sq(log_file)}",
+                "function Write-UpdateLog([string]$Message) {",
+                "  $line = (Get-Date).ToString('s') + ' ' + $Message",
+                "  Add-Content -LiteralPath $Log -Value $line",
+                "}",
+                f"Write-UpdateLog 'helper start wait_pid={pid}'",
+                f"Start-Sleep -Seconds {max(1, int(wait_seconds))}",
+                f"try {{ Wait-Process -Id {pid} -Timeout 45 }} catch {{",
+                "  Write-UpdateLog \"wait: $($_.Exception.Message)\"",
+                "}",
+                f"if (Get-Process -Id {pid} -ErrorAction SilentlyContinue) {{",
+                f"  Write-UpdateLog 'force-killing pid={pid}'",
+                f"  Stop-Process -Id {pid} -Force",
+                "  Start-Sleep -Seconds 2",
+                "}",
+                "$names = @('acars-bridge','ACARS-Print-Bridge','acars-print-bridge')",
+                "Get-Process -Name $names -ErrorAction SilentlyContinue |",
+                "  Where-Object { $_.Id -ne $PID } |",
+                "  Stop-Process -Force",
+                "Start-Sleep -Seconds 1",
+                f"$Target = {_ps_sq(current_exe)}",
+                f"$Staged = {_ps_sq(staged)}",
+                f"$WorkDir = {_ps_sq(work_dir)}",
+                f"$PyiTmp = {_ps_sq(pyi_tmp)}",
+                "$moved = $false",
+                "for ($i = 0; $i -lt 45; $i++) {",
+                "  try {",
+                "    Move-Item -LiteralPath $Staged -Destination $Target -Force -ErrorAction Stop",
+                "    $moved = $true",
+                "    break",
+                "  } catch {",
+                "    Start-Sleep -Seconds 1",
+                "  }",
+                "}",
+                "if (-not $moved) {",
+                "  Write-UpdateLog 'move failed'",
+                "  exit 1",
+                "}",
+                "Write-UpdateLog 'moved ok'",
+                "try { Unblock-File -LiteralPath $Target } catch {}",
+                "New-Item -ItemType Directory -Force -Path $PyiTmp | Out-Null",
+                "$env:TEMP = $PyiTmp",
+                "$env:TMP = $PyiTmp",
+                "Start-Process -FilePath $Target -WorkingDirectory $WorkDir",
+                "Write-UpdateLog 'relaunched'",
+                f"Remove-Item -LiteralPath {_ps_sq(helper)} -Force",
                 "",
             ]
         ),
         encoding="utf-8",
     )
-    # DETACHED_PROCESS so the helper outlives us.
-    creationflags = 0x00000008 | 0x00000200  # DETACHED_PROCESS | CREATE_NEW_PROCESS_GROUP
+
+    create_no_window = 0x08000000
+    detached = 0x00000008
+    new_group = 0x00000200
     subprocess.Popen(  # noqa: S603
-        ["cmd.exe", "/c", str(script)],
+        [
+            "powershell.exe",
+            "-NoProfile",
+            "-ExecutionPolicy",
+            "Bypass",
+            "-WindowStyle",
+            "Hidden",
+            "-File",
+            str(helper),
+        ],
         close_fds=True,
-        creationflags=creationflags,
+        creationflags=create_no_window | detached | new_group,
         cwd=str(work_dir),
+        stdin=subprocess.DEVNULL,
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
         env={**os.environ, "TEMP": str(pyi_tmp), "TMP": str(pyi_tmp)},
     )
-    return script
+    return helper
 
 
 def _unblock_windows_file(path: Path) -> None:

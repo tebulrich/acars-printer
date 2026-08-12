@@ -17,9 +17,10 @@ from PIL import Image, ImageDraw, ImageFont
 _DOTS_58 = 384
 _DOTS_80 = 576
 _DPI = 203
-# Keep content inside the printable area (heads often clip the outer ~1–2 mm).
-# ≈ 1.5 mm @ 203 dpi — one millimetre more usable width than a 2 mm inset.
-_EDGE_INSET_DOTS = 12
+# Asymmetric insets: keep a hairline left safety (~0.5 mm), spend the right
+# margin — POS-80 strips showed ~3–4 mm free after a full dash row.
+_LEFT_INSET_DOTS = 4
+_RIGHT_INSET_DOTS = 0
 
 
 def paper_dot_width(paper_width: str) -> int:
@@ -27,11 +28,15 @@ def paper_dot_width(paper_width: str) -> int:
 
 
 def edge_inset_dots() -> int:
-    return _EDGE_INSET_DOTS
+    """Left-edge inset (content starts here)."""
+    return _LEFT_INSET_DOTS
 
 
 def usable_dot_width(paper_width: str) -> int:
-    return max(64, paper_dot_width(paper_width) - 2 * _EDGE_INSET_DOTS)
+    return max(
+        64,
+        paper_dot_width(paper_width) - _LEFT_INSET_DOTS - _RIGHT_INSET_DOTS,
+    )
 
 
 def px_to_mm(px: int, *, dpi: int = _DPI) -> float:
@@ -101,11 +106,27 @@ def measure_char_width(font: ImageFont.ImageFont) -> int:
 
 
 def columns_for_bitmap(paper_width: str, glyph_px: int, *, bold: bool = False) -> int:
+    """Max monospace columns that fit the usable width without a right-side gap.
+
+    Uses the font's real advance (float). ``ceil(advance)`` packing left several
+    millimetres empty on POS-80 strips.
+    """
     usable = usable_dot_width(paper_width)
     font = load_glyph_font(glyph_px, bold=bold)
-    char_w = measure_char_width(font)
-    cols = max(16, usable // char_w)
-    while cols > 16 and cols * char_w > usable:
+    try:
+        advance = float(font.getlength("M"))  # type: ignore[attr-defined]
+    except Exception:  # noqa: BLE001
+        advance = float(measure_char_width(font))
+    if advance <= 0:
+        advance = 8.0
+    cols = max(16, int(usable / advance))
+    while cols > 16:
+        try:
+            line_w = float(font.getlength("-" * cols))  # type: ignore[attr-defined]
+        except Exception:  # noqa: BLE001
+            line_w = cols * advance
+        if line_w <= usable + 1e-6:
+            break
         cols -= 1
     return cols
 
@@ -120,7 +141,7 @@ def render_receipt_bitmap(
 ) -> Image.Image:
     """Render uppercase receipt text to a 1-bit image the full paper width."""
     dots = paper_dot_width(paper_width)
-    inset = _EDGE_INSET_DOTS
+    inset = _LEFT_INSET_DOTS
     font = load_glyph_font(glyph_px, bold=bold)
     gap = max(0, min(32, int(line_gap_px)))
     lines = text.replace("\r\n", "\n").replace("\r", "\n").split("\n")

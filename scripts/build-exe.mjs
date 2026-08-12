@@ -43,12 +43,18 @@ function runShell(line) {
 const venvPython = join(root, ".venv", "Scripts", "python.exe");
 
 console.log("=== Building Python bridge sidecar ===");
+const sidecarDist = join(root, "build", "sidecar-dist");
+const sidecarWork = join(root, "build", "acars-bridge-sidecar");
 if (existsSync(venvPython)) {
   run(venvPython, [
     "-m",
     "PyInstaller",
     "--noconfirm",
     "--clean",
+    "--distpath",
+    sidecarDist,
+    "--workpath",
+    sidecarWork,
     "packaging/acars-bridge-sidecar.spec",
   ]);
 } else {
@@ -58,6 +64,10 @@ if (existsSync(venvPython)) {
     "pyinstaller",
     "--noconfirm",
     "--clean",
+    "--distpath",
+    sidecarDist,
+    "--workpath",
+    sidecarWork,
     "packaging/acars-bridge-sidecar.spec",
   ]);
 }
