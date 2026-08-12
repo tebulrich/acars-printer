@@ -67,14 +67,40 @@ def is_frozen_app() -> bool:
     return bool(getattr(sys, "frozen", False)) and sys.platform == "win32"
 
 
+def can_auto_install() -> bool:
+    """True when we know which Windows EXE to replace (shell or frozen app)."""
+    return sys.platform == "win32" and current_executable() is not None
+
+
 def current_executable() -> Path | None:
+    """Path of the user-facing app EXE to replace on update.
+
+    Prefer ``ACARS_BRIDGE_SHELL_EXE`` (Tauri desktop shell). Fall back to the
+    frozen Python EXE for the legacy Qt onefile build.
+    """
+    raw = (os.environ.get("ACARS_BRIDGE_SHELL_EXE") or "").strip()
+    if raw:
+        path = Path(raw)
+        try:
+            if path.is_file():
+                return path.resolve()
+        except OSError:
+            pass
     if not is_frozen_app():
         return None
     return Path(sys.executable).resolve()
 
 
+def shell_wait_pid() -> int:
+    """PID the updater script must wait on before replacing the EXE."""
+    raw = (os.environ.get("ACARS_BRIDGE_SHELL_PID") or "").strip()
+    if raw.isdigit():
+        return int(raw)
+    return os.getpid()
+
+
 def pick_windows_asset(assets: list[dict]) -> dict | None:
-    """Prefer the packaged Windows x64 exe asset from a release."""
+    """Prefer the packaged Windows x64 portable exe (not the NSIS setup)."""
     candidates: list[tuple[int, dict]] = []
     for asset in assets:
         name = str(asset.get("name") or "")
@@ -88,6 +114,8 @@ def pick_windows_asset(assets: list[dict]) -> dict | None:
             score += 2
         if "acars" in lower or "print" in lower or "bridge" in lower:
             score += 2
+        if "setup" in lower or "installer" in lower or "nsis" in lower:
+            score -= 6
         candidates.append((score, asset))
     if not candidates:
         return None
@@ -255,12 +283,15 @@ def schedule_windows_replace_and_restart(
     new_exe: Path,
     current_exe: Path,
     wait_seconds: int = 2,
+    wait_pid: int | None = None,
 ) -> Path:
     """Write a helper script that replaces the running exe after this process exits.
 
     Uses a stable LocalAppData TEMP for the relaunched PyInstaller onefile extract
     (avoids ``Failed to load Python DLL …\\Temp\\_MEI…\\python312.dll`` when the
     system TEMP on another drive is cleaned mid-start).
+
+    ``wait_pid`` should be the desktop shell PID when the bridge is a sidecar.
     """
     if sys.platform != "win32":
         raise UpdateError("Automatic install is only supported on Windows.")
@@ -275,7 +306,7 @@ def schedule_windows_replace_and_restart(
     _unblock_windows_file(staged)
     _unblock_windows_file(new_exe)
 
-    pid = os.getpid()
+    pid = int(wait_pid) if wait_pid is not None else shell_wait_pid()
     work_dir = current_exe.parent
     # Stable extract dir — not D:\\Temp / %TEMP% which some cleaners wipe.
     local = Path(os.environ.get("LOCALAPPDATA") or tempfile.gettempdir())

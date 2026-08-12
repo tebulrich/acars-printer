@@ -21,8 +21,8 @@ def test_px_to_mm_203dpi():
     assert "1.0 mm" in mm_hint(8)
     assert paper_dot_width("80") == 576
     assert paper_dot_width("58") == 384
-    assert edge_inset_dots() == 16
-    assert usable_dot_width("80") == 576 - 32
+    assert edge_inset_dots() == 12
+    assert usable_dot_width("80") == 576 - 24
 
 
 def test_bitmap_columns_fit_usable_width():

@@ -14,6 +14,7 @@ import {
   disconnect,
   getMessage,
   hotkey,
+  installUpdate,
   listMessages,
   onBridgeEvent,
   printMessage,
@@ -514,6 +515,18 @@ export default function App() {
                 const r = await checkUpdates(true);
                 if (!r.release) {
                   flash("You're up to date");
+                  return;
+                }
+                if (r.can_install) {
+                  const go = window.confirm(
+                    `Update ${r.release.version} is available.\n\n` +
+                      `Download and install now? The app will restart.`,
+                  );
+                  if (!go) return;
+                  flash("Downloading update…");
+                  const installed = await installUpdate();
+                  flash(`Installing ${installed.version}… restarting`);
+                  await quitApp();
                   return;
                 }
                 const go = window.confirm(

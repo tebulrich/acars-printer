@@ -1,6 +1,6 @@
 mod bridge;
 
-use bridge::{BridgeError, BridgeSidecar};
+use bridge::{acquire_shell_lock, BridgeError, BridgeSidecar};
 use serde_json::{json, Value};
 use std::sync::Arc;
 use tauri::{
@@ -88,9 +88,19 @@ pub fn run() {
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_notification::init())
         .setup(|app| {
-            let sidecar = BridgeSidecar::start().map_err(|err| err.to_string())?;
+            // Manage state FIRST so invoke never sees "state not managed".
+            let sidecar = BridgeSidecar::create();
             sidecar.set_app(app.handle().clone());
-            app.manage(Arc::new(sidecar));
+            let log_path = sidecar.log_path().to_path_buf();
+            let sidecar = Arc::new(sidecar);
+            app.manage(Arc::clone(&sidecar));
+
+            if let Err(_err) = acquire_shell_lock(&log_path) {
+                // Message already shown; exit without a broken UI session.
+                app.handle().exit(0);
+                return Ok(());
+            }
+            sidecar.bootstrap();
 
             let show = MenuItem::with_id(app, "show", "Show window", true, None::<&str>)?;
             let reprint =

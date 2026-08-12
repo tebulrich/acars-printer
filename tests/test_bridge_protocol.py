@@ -263,6 +263,17 @@ def test_debug_folder_points_at_exe_log(
     assert folder["log"] == str(target)
 
 
+def test_install_update_requires_shell_exe(runtime: BridgeRuntime, monkeypatch) -> None:
+    monkeypatch.delenv("ACARS_BRIDGE_SHELL_EXE", raising=False)
+    monkeypatch.setattr(
+        "acars_bridge.bridge.runtime.current_executable", lambda: None
+    )
+    result = runtime.handle("install_update", {})
+    assert result["ok"] is False
+    assert "Automatic install" in result["error"]
+
+
+
 def test_quit_shuts_down(runtime: BridgeRuntime) -> None:
     _ok(runtime, "boot")
     _ok(runtime, "connect")

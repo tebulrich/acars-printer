@@ -44,8 +44,8 @@ export function NetworkPage({
   function toggleStation(checked: boolean) {
     if (checked && tapConnected) {
       const go = window.confirm(
-        "Connect/tap is active (hook mode).\n\n" +
-          "Station mode makes this PC own the Hoppie callsign. That usually " +
+        "Connect is already running.\n\n" +
+          "Station mode makes this PC use your callsign on Hoppie. That usually " +
           "conflicts with the aircraft.\n\n" +
           "Only continue if the plane is NOT logged into Hoppie with this callsign.\n\n" +
           "Enable station mode anyway?",
@@ -62,8 +62,8 @@ export function NetworkPage({
           Watching &amp; printing
         </h2>
         <p className="mb-3 text-sm text-[var(--muted)]">
-          Match the aircraft’s ACARS network. For normal tap/print the plane keeps
-          its own logon — nothing else is required here.
+          Match the aircraft ACARS network. For normal printing the plane keeps
+          its own Hoppie logon. Nothing else is required here.
         </p>
         <div className="grid max-w-xl gap-3">
           <Field label="ACARS network">
@@ -82,9 +82,9 @@ export function NetworkPage({
           <Field
             label="Callsign filter"
             hint={
-              "Optional print filter. Leave empty to print every flight — phone/station " +
-              "then auto-follows SimBrief or the last ACARS callsign. Set one only to " +
-              "force a specific callsign (also used as Hoppie “from” in station mode)."
+              "Optional. Leave empty to print every flight. The phone then follows " +
+              "SimBrief or the last ACARS callsign. Set a callsign only if you want " +
+              "to force one (also used in station mode)."
             }
           >
             <input
@@ -115,10 +115,11 @@ export function NetworkPage({
           Companion station mode
         </h2>
         <p className="mb-3 text-sm text-[var(--muted)]">
-          Optional offline mode. Lets this PC poll Hoppie as your callsign when
-          MSFS is not holding it. While Connect/tap is active, the phone can
-          already send weather / ATIS / telex / PDC through the aircraft’s live
-          session — leave station mode off then.
+          Leave this off in normal use. After you press Connect and the plane is
+          on Hoppie, the phone can already send weather, ATIS, telex, and PDC
+          using the aircraft. Turn station mode on only when the plane is not
+          logged into Hoppie and you still want the phone to send as your
+          callsign from this PC.
         </p>
         <div className="grid max-w-xl gap-3">
           <label className="grid gap-1 text-sm">
@@ -131,10 +132,9 @@ export function NetworkPage({
               Enable station mode
             </span>
             <span className="pl-6 text-xs text-[var(--muted)]">
-              This PC then polls (and can send) as your callsign without MSFS.
-              On Save, Hoppie is checked — if the callsign is already in use
-              (typical when Connect/tap + the aircraft hold it), station mode is
-              turned back off automatically.
+              This PC then uses your callsign on Hoppie without the sim. When you
+              save, we check Hoppie. If the callsign is already taken by the
+              aircraft, station mode turns off by itself.
             </span>
           </label>
 
@@ -142,8 +142,8 @@ export function NetworkPage({
             label="Hoppie logon code"
             hint={
               settings.has_hoppie_logon
-                ? "Saved for station mode — leave blank to keep it. Connect/tap phone sends use the plane’s logon from the wire instead."
-                : "Needed only for station mode (offline). Same code as hoppie.nl; stored encrypted. Connect/tap phone sends do not need this."
+                ? "Saved for station mode. Leave blank to keep it. Phone sends while Connect is active use the plane instead."
+                : "Only needed for station mode. Same code as hoppie.nl; stored encrypted. Not required when the phone sends through Connect and the plane."
             }
           >
             <input
@@ -172,8 +172,8 @@ export function NetworkPage({
       <section className="rounded border border-[var(--border)] bg-[var(--surface)] p-4">
         <h2 className="mb-1 text-sm font-semibold text-[var(--text)]">Phone companion</h2>
         <p className="mb-3 text-sm text-[var(--muted)]">
-          Open a page on your phone (same Wi‑Fi) to read the inbox, reprint, and
-          reply WILCO. Anyone on the LAN can open the URL.
+          Open a page on your phone (same Wi-Fi) to read the inbox, reprint, and
+          reply WILCO. Anyone on your home network can open the URL.
         </p>
         <div className="grid max-w-xl gap-3">
           <label className="grid gap-1 text-sm">
@@ -186,8 +186,8 @@ export function NetworkPage({
               Let my phone show the message inbox
             </span>
             <span className="pl-6 text-xs text-[var(--muted)]">
-              Starts a local page on your Wi‑Fi. Copy the URL after saving.
-              Phone sends need Connect (after one Hoppie exchange) or station
+              Starts a local page on your Wi-Fi. Copy the URL after saving.
+              Phone sends need Connect (after one Hoppie message) or station
               mode above.
             </span>
           </label>

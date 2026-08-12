@@ -126,8 +126,14 @@ export function checkUpdates(manual = true) {
       notes: string;
       asset_url: string;
       html_url: string;
+      asset_name?: string;
     } | null;
+    can_install?: boolean;
   }>("check_updates", { manual });
+}
+
+export function installUpdate() {
+  return bridge<{ restarting: boolean; version: string }>("install_update");
 }
 
 export function skipUpdate(version: string) {

@@ -22,10 +22,10 @@ from acars_bridge import __version__
 from acars_bridge.services.updater import (
     ReleaseInfo,
     UpdateError,
+    can_auto_install,
     check_for_update,
     current_executable,
     download_release,
-    is_frozen_app,
     schedule_windows_replace_and_restart,
 )
 
@@ -121,7 +121,7 @@ class UpdateDialog(QDialog):
         row.addWidget(self.btn_notes)
         layout.addLayout(row)
 
-        can_install = is_frozen_app() and current_executable() is not None
+        can_install = can_auto_install()
         if not can_install:
             self.btn_update.setText("Open download page")
             self.status.setText(
@@ -143,7 +143,7 @@ class UpdateDialog(QDialog):
             QDesktopServices.openUrl(self._release.html_url)
 
     def _on_update(self) -> None:
-        if not (is_frozen_app() and current_executable() is not None):
+        if not can_auto_install():
             self._open_github()
             self.accept()
             return

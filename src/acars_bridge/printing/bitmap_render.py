@@ -18,7 +18,8 @@ _DOTS_58 = 384
 _DOTS_80 = 576
 _DPI = 203
 # Keep content inside the printable area (heads often clip the outer ~1–2 mm).
-_EDGE_INSET_DOTS = 16  # ≈ 2 mm @ 203 dpi
+# ≈ 1.5 mm @ 203 dpi — one millimetre more usable width than a 2 mm inset.
+_EDGE_INSET_DOTS = 12
 
 
 def paper_dot_width(paper_width: str) -> int:

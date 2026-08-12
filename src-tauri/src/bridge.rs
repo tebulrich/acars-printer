@@ -1,4 +1,4 @@
-use serde_json::{json, Value};
+﻿use serde_json::{json, Value};
 use std::fs::OpenOptions;
 use std::io::{BufRead, BufReader, Write};
 use std::path::{Path, PathBuf};
@@ -42,10 +42,13 @@ pub struct BridgeSidecar {
     root: PathBuf,
     log_path: PathBuf,
     app: Mutex<Option<AppHandle>>,
+    start_error: Mutex<Option<String>>,
 }
 
 impl BridgeSidecar {
-    pub fn start() -> Result<Self, BridgeError> {
+    /// Construct without starting the child. Call ``manage()`` first, then
+    /// ``bootstrap()`` so Tauri state is never missing.
+    pub fn create() -> Self {
         let exe_dir = exe_directory();
         let log_path = exe_dir
             .as_ref()
@@ -64,31 +67,34 @@ impl BridgeSidecar {
                     .unwrap_or_else(|_| "(unknown)".into())
             ),
         );
-
         let root = project_root();
         startup_log(&log_path, &format!("project_root={}", root.display()));
-
-        let sidecar = Self {
+        Self {
             inner: Mutex::new(None),
             root,
-            log_path: log_path.clone(),
+            log_path,
             app: Mutex::new(None),
-        };
-        match sidecar.ensure_running() {
+            start_error: Mutex::new(None),
+        }
+    }
+
+    pub fn log_path(&self) -> &Path {
+        &self.log_path
+    }
+
+    /// Start the embedded bridge after Tauri has managed this state.
+    pub fn bootstrap(&self) {
+        preempt_orphan_bridges(&self.log_path);
+        match self.ensure_running() {
             Ok(()) => {
-                startup_log(&log_path, "bridge ready");
-                Ok(sidecar)
+                startup_log(&self.log_path, "bridge ready");
             }
             Err(err) => {
-                startup_log(&log_path, &format!("bridge start FAILED: {err}"));
-                show_fatal(
-                    "ACARS Print Bridge",
-                    &format!(
-                        "{err}\n\nA log was written next to the app:\n{}",
-                        log_path.display()
-                    ),
-                );
-                Err(err)
+                let msg = err.to_string();
+                startup_log(&self.log_path, &format!("bridge start FAILED: {msg}"));
+                if let Ok(mut guard) = self.start_error.lock() {
+                    *guard = Some(msg);
+                }
             }
         }
     }
@@ -113,11 +119,19 @@ impl BridgeSidecar {
             }
         }
         *guard = Some(spawn_sidecar(&self.root, &self.log_path)?);
+        if let Ok(mut err) = self.start_error.lock() {
+            *err = None;
+        }
         Ok(())
     }
 
     pub fn request(&self, command: &str, args: Value) -> Result<Value, BridgeError> {
-        self.ensure_running()?;
+        if let Err(err) = self.ensure_running() {
+            if let Ok(mut stored) = self.start_error.lock() {
+                *stored = Some(err.to_string());
+            }
+            return Err(err);
+        }
         let mut guard = self
             .inner
             .lock()
@@ -302,7 +316,9 @@ fn ensure_embedded_sidecar(log_path: &Path) -> Result<Option<PathBuf>, BridgeErr
     }
 }
 
+#[cfg(not(has_embedded_sidecar))]
 fn python_candidates(root: &Path) -> Vec<PathBuf> {
+    // Dev only: never use bare PATH python/pythonw (system installs break easily).
     let mut out = Vec::new();
     if let Ok(custom) = std::env::var("ACARS_BRIDGE_PYTHON") {
         out.push(PathBuf::from(custom));
@@ -311,14 +327,10 @@ fn python_candidates(root: &Path) -> Vec<PathBuf> {
     {
         out.push(root.join(".venv").join("Scripts").join("python.exe"));
         out.push(root.join(".venv").join("Scripts").join("pythonw.exe"));
-        out.push(PathBuf::from("python.exe"));
-        out.push(PathBuf::from("pythonw.exe"));
     }
     #[cfg(not(windows))]
     {
         out.push(root.join(".venv").join("bin").join("python"));
-        out.push(PathBuf::from("python3"));
-        out.push(PathBuf::from("python"));
     }
     out
 }
@@ -336,49 +348,76 @@ fn configure_no_console(cmd: &mut Command) {
 fn spawn_sidecar(root: &Path, log_path: &Path) -> Result<SidecarInner, BridgeError> {
     let mut last_err = String::new();
 
-    if let Some(path) = ensure_embedded_sidecar(log_path)? {
-        startup_log(
-            log_path,
-            &format!("trying embedded bridge {}", path.display()),
-        );
-        match spawn_process(&path, &[], root, log_path, /*bundled*/ true) {
-            Ok(inner) => return Ok(inner),
-            Err(err) => {
-                last_err = err;
-                startup_log(log_path, &format!("embedded bridge failed: {last_err}"));
+    match ensure_embedded_sidecar(log_path) {
+        Ok(Some(path)) => {
+            startup_log(
+                log_path,
+                &format!("trying embedded bridge {}", path.display()),
+            );
+            match spawn_process(&path, &[], root, log_path, /*bundled*/ true) {
+                Ok(inner) => return Ok(inner),
+                Err(err) => {
+                    last_err = err;
+                    startup_log(log_path, &format!("embedded bridge failed: {last_err}"));
+                    #[cfg(has_embedded_sidecar)]
+                    {
+                        // Packaged builds must not fall back to a random Python on PATH
+                        // (especially when dist/ sits next to the source tree).
+                        return Err(BridgeError::Message(format!(
+                            "Could not start the embedded ACARS bridge ({last_err}). \
+Reinstall from GitHub Releases. See acars-print-bridge.log next to the app."
+                        )));
+                    }
+                }
+            }
+        }
+        Ok(None) => {
+            startup_log(log_path, "no embedded bridge in this build (dev mode)");
+        }
+        Err(err) => {
+            startup_log(log_path, &format!("embedded extract failed: {err}"));
+            #[cfg(has_embedded_sidecar)]
+            {
+                return Err(err);
+            }
+            #[cfg(not(has_embedded_sidecar))]
+            {
+                last_err = err.to_string();
             }
         }
     }
 
-    let has_source = root.join("src").join("acars_bridge").is_dir();
-    if has_source {
-        for py in python_candidates(root) {
-            startup_log(log_path, &format!("trying python {}", py.display()));
-            match spawn_process(
-                &py,
-                &["-m", "acars_bridge.bridge", "serve"],
-                root,
-                log_path,
-                /*bundled*/ false,
-            ) {
-                Ok(inner) => return Ok(inner),
-                Err(err) => {
-                    last_err = err;
-                    startup_log(log_path, &format!("python launch failed: {last_err}"));
+    #[cfg(not(has_embedded_sidecar))]
+    {
+        let has_source = root.join("src").join("acars_bridge").is_dir();
+        if has_source {
+            for py in python_candidates(root) {
+                if !py.is_file() {
+                    continue;
+                }
+                startup_log(log_path, &format!("trying python {}", py.display()));
+                match spawn_process(
+                    &py,
+                    &["-m", "acars_bridge.bridge", "serve"],
+                    root,
+                    log_path,
+                    /*bundled*/ false,
+                ) {
+                    Ok(inner) => return Ok(inner),
+                    Err(err) => {
+                        last_err = err;
+                        startup_log(log_path, &format!("python launch failed: {last_err}"));
+                    }
                 }
             }
+        } else if last_err.is_empty() {
+            last_err = "no embedded bridge and no project source tree".into();
         }
-    } else if last_err.is_empty() {
-        startup_log(
-            log_path,
-            "release build missing embedded bridge — rebuild with npm run build:exe",
-        );
-        last_err = "embedded bridge missing from this build".into();
     }
 
     Err(BridgeError::Message(format!(
         "Could not start the ACARS bridge ({last_err}). \
-Reinstall from GitHub Releases. See acars-print-bridge.log next to the app."
+See acars-print-bridge.log next to the app."
     )))
 }
 
@@ -397,6 +436,10 @@ fn spawn_process(
     }
     // Shared support log next to the desktop EXE.
     cmd.env("ACARS_BRIDGE_EXE_LOG", log_path);
+    if let Ok(shell) = std::env::current_exe() {
+        cmd.env("ACARS_BRIDGE_SHELL_EXE", &shell);
+    }
+    cmd.env("ACARS_BRIDGE_SHELL_PID", std::process::id().to_string());
     configure_no_console(&mut cmd);
     let mut child = cmd
         .spawn()
@@ -492,6 +535,105 @@ fn startup_log(path: &Path, message: &str) {
     if let Ok(mut file) = OpenOptions::new().create(true).append(true).open(path) {
         let _ = file.write_all(line.as_bytes());
         let _ = file.flush();
+    }
+}
+
+fn preempt_orphan_bridges(log_path: &Path) {
+    // Previous shells may die without killing the embedded child; that leaves
+    // acars-bridge.exe (+ app.lock) around and breaks the next launch.
+    #[cfg(windows)]
+    {
+        startup_log(log_path, "preempt: stopping leftover acars-bridge.exe if any");
+        let mut cmd = Command::new("taskkill");
+        cmd.args(["/F", "/IM", "acars-bridge.exe", "/T"]);
+        configure_no_console_output(&mut cmd);
+        let _ = cmd.output();
+        if let Some(local) = std::env::var_os("LOCALAPPDATA") {
+            let lock = PathBuf::from(local)
+                .join("acars-bridge")
+                .join("acars-bridge")
+                .join("app.lock");
+            if lock.is_file() {
+                let _ = std::fs::remove_file(&lock);
+                startup_log(log_path, &format!("preempt: removed {}", lock.display()));
+            }
+        }
+    }
+    #[cfg(not(windows))]
+    {
+        let _ = log_path;
+    }
+}
+
+fn configure_no_console_output(cmd: &mut Command) {
+    cmd.stdin(Stdio::null())
+        .stdout(Stdio::null())
+        .stderr(Stdio::null());
+    #[cfg(windows)]
+    {
+        cmd.creation_flags(CREATE_NO_WINDOW);
+    }
+}
+
+/// One desktop shell at a time (file + PID). Returns Err if another live shell holds it.
+pub fn acquire_shell_lock(log_path: &Path) -> Result<(), String> {
+    let Some(local) = std::env::var_os("LOCALAPPDATA") else {
+        return Ok(());
+    };
+    let dir = PathBuf::from(local).join("acars-bridge").join("acars-bridge");
+    let _ = std::fs::create_dir_all(&dir);
+    let path = dir.join("shell.lock");
+    let me = std::process::id();
+    if path.is_file() {
+        if let Ok(raw) = std::fs::read_to_string(&path) {
+            if let Ok(pid) = raw.trim().parse::<u32>() {
+                if pid != me && windows_pid_alive(pid) {
+                    let msg = format!(
+                        "ACARS Print Bridge is already running (PID {pid}). Quit the other copy from the tray first."
+                    );
+                    startup_log(log_path, &msg);
+                    show_fatal("ACARS Print Bridge", &msg);
+                    return Err(msg);
+                }
+            }
+        }
+        let _ = std::fs::remove_file(&path);
+    }
+    if let Err(err) = std::fs::write(&path, format!("{me}\n")) {
+        startup_log(
+            log_path,
+            &format!("shell.lock write failed ({err}); continuing"),
+        );
+    } else {
+        startup_log(log_path, &format!("shell.lock acquired pid={me}"));
+    }
+    Ok(())
+}
+
+fn windows_pid_alive(pid: u32) -> bool {
+    if pid == 0 {
+        return false;
+    }
+    #[cfg(windows)]
+    {
+        let mut cmd = Command::new("tasklist");
+        cmd.args(["/FI", &format!("PID eq {pid}"), "/NH"])
+            .stdin(Stdio::null())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::null());
+        cmd.creation_flags(CREATE_NO_WINDOW);
+        match cmd.output() {
+            Ok(out) => {
+                let text = String::from_utf8_lossy(&out.stdout).to_lowercase();
+                text.contains(&pid.to_string()) && !text.contains("no tasks")
+            }
+            Err(_) => false,
+        }
+    }
+    #[cfg(not(windows))]
+    {
+        let _ = pid;
+        false
     }
 }
 

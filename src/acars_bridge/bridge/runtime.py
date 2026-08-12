@@ -19,7 +19,15 @@ from acars_bridge.printing.discovery import list_printer_choices
 from acars_bridge.services.actions import ActionError, PrinterActions
 from acars_bridge.services.debug_log import DebugLog
 from acars_bridge.services.session import AppSession
-from acars_bridge.services.updater import UpdateError, check_for_update
+from acars_bridge.services.updater import (
+    UpdateError,
+    can_auto_install,
+    check_for_update,
+    current_executable,
+    download_release,
+    schedule_windows_replace_and_restart,
+    shell_wait_pid,
+)
 from acars_bridge.tap.service import TapService, TapStatus
 
 
@@ -983,9 +991,9 @@ class BridgeRuntime:
         except UpdateError as exc:
             if manual:
                 return _err(str(exc))
-            return _ok({"release": None})
+            return _ok({"release": None, "can_install": can_auto_install()})
         if release is None:
-            return _ok({"release": None})
+            return _ok({"release": None, "can_install": can_auto_install()})
         return _ok(
             {
                 "release": {
@@ -994,9 +1002,41 @@ class BridgeRuntime:
                     "asset_url": release.download_url,
                     "html_url": release.html_url,
                     "asset_name": release.asset_name,
-                }
+                },
+                "can_install": can_auto_install(),
             }
         )
+
+    def cmd_install_update(self, _args: dict[str, Any]) -> dict[str, Any]:
+        """Download the latest portable EXE and schedule replace of the shell."""
+        exe = current_executable()
+        if exe is None:
+            return _err(
+                "Automatic install is only available from the Windows desktop app."
+            )
+        skipped = self.session.settings.skipped_update_version()
+        try:
+            release = check_for_update(skipped_version=skipped)
+        except UpdateError as exc:
+            return _err(str(exc))
+        if release is None:
+            return _err("No update available.")
+        dest = self.session.paths.root / "updates"
+        try:
+            path = download_release(release, dest)
+            schedule_windows_replace_and_restart(
+                new_exe=path,
+                current_exe=exe,
+                wait_pid=shell_wait_pid(),
+            )
+        except UpdateError as exc:
+            return _err(str(exc))
+        self.debug.info(
+            "update_scheduled",
+            version=release.version,
+            target=str(exe),
+        )
+        return _ok({"restarting": True, "version": release.version})
 
     def cmd_skip_update(self, args: dict[str, Any]) -> dict[str, Any]:
         version = str(args.get("version") or "")

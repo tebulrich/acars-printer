@@ -1,15 +1,22 @@
 from __future__ import annotations
 
+import os
+import sys
+
 import httpx
 import pytest
 
 from acars_bridge.services.updater import (
     UpdateError,
+    can_auto_install,
     check_for_update,
+    current_executable,
     fetch_latest_release,
     is_newer,
     parse_version,
     pick_windows_asset,
+    schedule_windows_replace_and_restart,
+    shell_wait_pid,
 )
 
 
@@ -40,6 +47,76 @@ def test_pick_windows_asset_prefers_named_exe():
     picked = pick_windows_asset(assets)
     assert picked is not None
     assert picked["name"].endswith("windows-x64.exe")
+
+
+def test_pick_windows_asset_prefers_portable_over_setup():
+    assets = [
+        {
+            "name": "ACARS.Print.Bridge_1.3.0_x64-setup.exe",
+            "browser_download_url": "http://x/setup",
+        },
+        {
+            "name": "ACARS-Print-Bridge-1.3.0-windows-x64.exe",
+            "browser_download_url": "http://x/portable",
+        },
+    ]
+    picked = pick_windows_asset(assets)
+    assert picked is not None
+    assert picked["name"].endswith("windows-x64.exe")
+
+
+def test_current_executable_prefers_shell_env(tmp_path, monkeypatch):
+    shell = tmp_path / "ACARS-Print-Bridge.exe"
+    shell.write_bytes(b"fake")
+    monkeypatch.setenv("ACARS_BRIDGE_SHELL_EXE", str(shell))
+    monkeypatch.setattr(
+        "acars_bridge.services.updater.is_frozen_app", lambda: False
+    )
+    assert current_executable() == shell.resolve()
+    assert can_auto_install() is True
+
+    monkeypatch.delenv("ACARS_BRIDGE_SHELL_EXE", raising=False)
+    assert current_executable() is None
+    assert can_auto_install() is False
+
+
+def test_shell_wait_pid_prefers_env(monkeypatch):
+    monkeypatch.setenv("ACARS_BRIDGE_SHELL_PID", "424242")
+    assert shell_wait_pid() == 424242
+    monkeypatch.delenv("ACARS_BRIDGE_SHELL_PID", raising=False)
+    assert shell_wait_pid() == os.getpid()
+
+
+@pytest.mark.skipif(sys.platform != "win32", reason="Windows only")
+def test_schedule_replace_uses_wait_pid(tmp_path, monkeypatch):
+    new_exe = tmp_path / "new.exe"
+    current = tmp_path / "app.exe"
+    new_exe.write_bytes(b"new")
+    current.write_bytes(b"old")
+
+    launched: list[list[str]] = []
+
+    def fake_popen(args, **kwargs):
+        launched.append(list(args))
+
+        class _P:
+            pass
+
+        return _P()
+
+    monkeypatch.setattr(
+        "acars_bridge.services.updater.subprocess.Popen", fake_popen
+    )
+    monkeypatch.setattr(
+        "acars_bridge.services.updater._unblock_windows_file", lambda _p: None
+    )
+    script = schedule_windows_replace_and_restart(
+        new_exe=new_exe, current_exe=current, wait_pid=999001
+    )
+    text = script.read_text(encoding="utf-8")
+    assert "set OLD_PID=999001" in text
+    assert launched
+    assert launched[0][0].lower().endswith("cmd.exe") or launched[0][0] == "cmd.exe"
 
 
 def test_fetch_latest_release_mock():

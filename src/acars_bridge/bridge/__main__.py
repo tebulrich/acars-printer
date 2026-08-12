@@ -22,8 +22,16 @@ _PROTOCOL_OUT: TextIO = sys.stdout
 
 
 def _emit(payload: dict) -> None:
-    _PROTOCOL_OUT.write(json.dumps(payload, default=str) + "\n")
-    _PROTOCOL_OUT.flush()
+    try:
+        _PROTOCOL_OUT.write(json.dumps(payload, default=str) + "\n")
+        _PROTOCOL_OUT.flush()
+    except OSError:
+        # Parent may have closed the pipe after a failed handshake; never crash here.
+        try:
+            sys.stderr.write(json.dumps(payload, default=str) + "\n")
+            sys.stderr.flush()
+        except OSError:
+            pass
 
 
 def isolate_protocol_stdout() -> TextIO:
@@ -58,6 +66,14 @@ def _build_runtime(*, data_dir: str | None = None, fake_printer: bool = False) -
     return BridgeRuntime(session, clear_messages_on_boot=True)
 
 
+def _under_desktop_shell() -> bool:
+    """True when spawned by the Tauri shell (shell owns single-instance)."""
+    return bool(
+        (os.environ.get("ACARS_BRIDGE_SHELL_PID") or "").strip()
+        or (os.environ.get("ACARS_BRIDGE_SHELL_EXE") or "").strip()
+    )
+
+
 def serve() -> int:
     from acars_bridge.native_runtime import prepare_frozen_natives
 
@@ -67,7 +83,9 @@ def serve() -> int:
     fake = os.environ.get("ACARS_BRIDGE_FAKE_PRINTER", "").strip() in {"1", "true", "yes"}
     lock = None
     try:
-        if not data_dir:
+        # Desktop shell enforces one UI process; the child bridge must not fight
+        # orphaned locks from a previous crashed session.
+        if not data_dir and not _under_desktop_shell():
             lock = acquire_lock(AppPaths.default().root / "app.lock")
     except SingleInstanceError as exc:
         _emit(_err(str(exc)))
