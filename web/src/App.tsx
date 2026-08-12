@@ -103,6 +103,8 @@ async function promptUpdateInstall(
       notify("Downloading update...");
       const installed = await installUpdate();
       notify(`Installing ${installed.version}... restarting`);
+      // Give the detached update helper time to spawn before this process tree exits.
+      await new Promise((resolve) => window.setTimeout(resolve, 900));
       await quitApp();
       return;
     }

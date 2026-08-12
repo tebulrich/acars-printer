@@ -118,15 +118,14 @@ def test_schedule_replace_uses_wait_pid(tmp_path, monkeypatch):
     text = script.read_text(encoding="utf-8")
     assert script.suffix.lower() == ".ps1"
     assert "Wait-Process -Id 999001 -Timeout 45" in text
+    assert "relaunched" in text
     assert "tasklist" not in text.lower()
     assert " find " not in text.lower()
     assert launched
-    assert launched[0][0].lower().endswith("powershell.exe") or launched[0][
-        0
-    ].lower() == "powershell.exe"
-    assert "-File" in launched[0]
-    assert str(script) in launched[0]
-    # CREATE_NO_WINDOW | DETACHED_PROCESS | CREATE_NEW_PROCESS_GROUP
+    # Launched via cmd start /b so the helper survives app exit.
+    assert launched[0][0].lower().endswith("cmd.exe") or launched[0][0].lower() == "cmd.exe"
+    assert any("acars-bridge-update-launch.cmd" in str(a) for a in launched[0])
+    # CREATE_NO_WINDOW
     assert flags and (flags[0] & 0x08000000) == 0x08000000
 
 

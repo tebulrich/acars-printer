@@ -288,8 +288,9 @@ def schedule_windows_replace_and_restart(
     """Write a helper script that replaces the running exe after this process exits.
 
     Waits for ``wait_pid`` (desktop shell) with a hard timeout, force-kills if
-    needed, replaces the EXE, then relaunches. Runs hidden (no console windows).
-    Avoids ``tasklist | find`` which can hang with a visible cmd window.
+    needed, replaces the EXE, then relaunches. The helper is started via
+    ``cmd start /b`` + breakaway-from-job so it survives when the elevated
+    shell/bridge process tree exits.
     """
     if sys.platform != "win32":
         raise UpdateError("Automatic install is only supported on Windows.")
@@ -308,9 +309,11 @@ def schedule_windows_replace_and_restart(
     local = Path(os.environ.get("LOCALAPPDATA") or tempfile.gettempdir())
     app_data = local / "acars-bridge" / "acars-bridge"
     pyi_tmp = app_data / "pyi-tmp"
+    app_data.mkdir(parents=True, exist_ok=True)
     pyi_tmp.mkdir(parents=True, exist_ok=True)
     log_file = app_data / "update-helper.log"
     helper = Path(tempfile.gettempdir()) / "acars-bridge-update.ps1"
+    launcher = Path(tempfile.gettempdir()) / "acars-bridge-update-launch.cmd"
 
     def _ps_sq(path: Path | str) -> str:
         return "'" + str(path).replace("'", "''") + "'"
@@ -318,31 +321,46 @@ def schedule_windows_replace_and_restart(
     helper.write_text(
         "\n".join(
             [
-                "$ErrorActionPreference = 'SilentlyContinue'",
+                "$ErrorActionPreference = 'Continue'",
                 f"$Log = {_ps_sq(log_file)}",
+                f"$LogDir = {_ps_sq(app_data)}",
+                "New-Item -ItemType Directory -Force -Path $LogDir | Out-Null",
                 "function Write-UpdateLog([string]$Message) {",
                 "  $line = (Get-Date).ToString('s') + ' ' + $Message",
-                "  Add-Content -LiteralPath $Log -Value $line",
+                "  Add-Content -LiteralPath $Log -Value $line -ErrorAction SilentlyContinue",
                 "}",
                 f"Write-UpdateLog 'helper start wait_pid={pid}'",
                 f"Start-Sleep -Seconds {max(1, int(wait_seconds))}",
-                f"try {{ Wait-Process -Id {pid} -Timeout 45 }} catch {{",
+                f"try {{ Wait-Process -Id {pid} -Timeout 45 -ErrorAction Stop }} catch {{",
                 "  Write-UpdateLog \"wait: $($_.Exception.Message)\"",
                 "}",
                 f"if (Get-Process -Id {pid} -ErrorAction SilentlyContinue) {{",
                 f"  Write-UpdateLog 'force-killing pid={pid}'",
-                f"  Stop-Process -Id {pid} -Force",
+                f"  Stop-Process -Id {pid} -Force -ErrorAction SilentlyContinue",
                 "  Start-Sleep -Seconds 2",
                 "}",
-                "$names = @('acars-bridge','ACARS-Print-Bridge','acars-print-bridge')",
-                "Get-Process -Name $names -ErrorAction SilentlyContinue |",
-                "  Where-Object { $_.Id -ne $PID } |",
-                "  Stop-Process -Force",
-                "Start-Sleep -Seconds 1",
                 f"$Target = {_ps_sq(current_exe)}",
                 f"$Staged = {_ps_sq(staged)}",
                 f"$WorkDir = {_ps_sq(work_dir)}",
                 f"$PyiTmp = {_ps_sq(pyi_tmp)}",
+                # Kill anything still locking the target/staged paths (versioned names too).
+                "Get-CimInstance Win32_Process -ErrorAction SilentlyContinue |",
+                "  Where-Object {",
+                "    $_.ExecutablePath -and (",
+                "      $_.ExecutablePath -ieq $Target -or $_.ExecutablePath -ieq $Staged",
+                "    )",
+                "  } | ForEach-Object {",
+                "    Write-UpdateLog \"killing locker pid=$($_.ProcessId)\"",
+                "    Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue",
+                "  }",
+                "$names = @('acars-bridge','ACARS-Print-Bridge','acars-print-bridge')",
+                "Get-Process -Name $names -ErrorAction SilentlyContinue |",
+                "  Where-Object { $_.Id -ne $PID } |",
+                "  ForEach-Object {",
+                "    Write-UpdateLog \"killing name=$($_.ProcessName) pid=$($_.Id)\"",
+                "    Stop-Process -Id $_.Id -Force -ErrorAction SilentlyContinue",
+                "  }",
+                "Start-Sleep -Seconds 2",
                 "$moved = $false",
                 "for ($i = 0; $i -lt 45; $i++) {",
                 "  try {",
@@ -350,21 +368,55 @@ def schedule_windows_replace_and_restart(
                 "    $moved = $true",
                 "    break",
                 "  } catch {",
-                "    Start-Sleep -Seconds 1",
+                "    try {",
+                "      Copy-Item -LiteralPath $Staged -Destination $Target -Force -ErrorAction Stop",
+                "      Remove-Item -LiteralPath $Staged -Force -ErrorAction SilentlyContinue",
+                "      $moved = $true",
+                "      break",
+                "    } catch {",
+                "      Start-Sleep -Seconds 1",
+                "    }",
                 "  }",
                 "}",
                 "if (-not $moved) {",
-                "  Write-UpdateLog 'move failed'",
+                "  Write-UpdateLog 'replace failed'",
                 "  exit 1",
                 "}",
-                "Write-UpdateLog 'moved ok'",
+                "Write-UpdateLog 'replaced ok'",
                 "try { Unblock-File -LiteralPath $Target } catch {}",
                 "New-Item -ItemType Directory -Force -Path $PyiTmp | Out-Null",
                 "$env:TEMP = $PyiTmp",
                 "$env:TMP = $PyiTmp",
-                "Start-Process -FilePath $Target -WorkingDirectory $WorkDir",
-                "Write-UpdateLog 'relaunched'",
-                f"Remove-Item -LiteralPath {_ps_sq(helper)} -Force",
+                "Start-Sleep -Milliseconds 500",
+                "$started = $false",
+                "try {",
+                "  $p = Start-Process -FilePath $Target -WorkingDirectory $WorkDir -PassThru -ErrorAction Stop",
+                "  Write-UpdateLog \"relaunched pid=$($p.Id)\"",
+                "  $started = $true",
+                "} catch {",
+                "  Write-UpdateLog \"Start-Process failed: $($_.Exception.Message)\"",
+                "}",
+                "if (-not $started) {",
+                "  cmd.exe /c ('start \"\" /D \"{0}\" \"{1}\"' -f $WorkDir, $Target)",
+                "  Write-UpdateLog 'relaunched via cmd start'",
+                "  $started = $true",
+                "}",
+                "if (-not $started) { exit 1 }",
+                f"Remove-Item -LiteralPath {_ps_sq(helper)} -Force -ErrorAction SilentlyContinue",
+                "",
+            ]
+        ),
+        encoding="utf-8",
+    )
+
+    # ``start /b`` so the PowerShell helper outlives the quitting app tree.
+    launcher.write_text(
+        "\r\n".join(
+            [
+                "@echo off",
+                "setlocal EnableExtensions",
+                f'start "" /b powershell.exe -NoProfile -ExecutionPolicy Bypass -WindowStyle Hidden -File "{helper}"',
+                'del "%~f0" >nul 2>&1',
                 "",
             ]
         ),
@@ -374,25 +426,28 @@ def schedule_windows_replace_and_restart(
     create_no_window = 0x08000000
     detached = 0x00000008
     new_group = 0x00000200
-    subprocess.Popen(  # noqa: S603
-        [
-            "powershell.exe",
-            "-NoProfile",
-            "-ExecutionPolicy",
-            "Bypass",
-            "-WindowStyle",
-            "Hidden",
-            "-File",
-            str(helper),
-        ],
-        close_fds=True,
-        creationflags=create_no_window | detached | new_group,
-        cwd=str(work_dir),
-        stdin=subprocess.DEVNULL,
-        stdout=subprocess.DEVNULL,
-        stderr=subprocess.DEVNULL,
-        env={**os.environ, "TEMP": str(pyi_tmp), "TMP": str(pyi_tmp)},
-    )
+    breakaway = 0x01000000
+    base_flags = create_no_window | detached | new_group
+    popen_kwargs = {
+        "close_fds": True,
+        "cwd": str(work_dir),
+        "stdin": subprocess.DEVNULL,
+        "stdout": subprocess.DEVNULL,
+        "stderr": subprocess.DEVNULL,
+        "env": {**os.environ, "TEMP": str(pyi_tmp), "TMP": str(pyi_tmp)},
+    }
+    try:
+        subprocess.Popen(  # noqa: S603
+            ["cmd.exe", "/c", str(launcher)],
+            creationflags=base_flags | breakaway,
+            **popen_kwargs,
+        )
+    except OSError:
+        subprocess.Popen(  # noqa: S603
+            ["cmd.exe", "/c", str(launcher)],
+            creationflags=base_flags,
+            **popen_kwargs,
+        )
     return helper
 
 
