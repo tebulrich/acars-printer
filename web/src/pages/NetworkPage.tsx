@@ -96,7 +96,11 @@ export function NetworkPage({
           </Field>
           <Field
             label="Aircraft registration"
-            hint="Optional tail number for the strip header (e.g. D-AILA)."
+            hint={
+              "Optional. Printed on ACARS strip headers. If set, it is used instead " +
+              "of the SimBrief tail for auto weather strips. Leave empty to omit the " +
+              "tail on ACARS headers — SimBrief OFP tickets still show the OFP registration."
+            }
           >
             <input
               className={inputClass}

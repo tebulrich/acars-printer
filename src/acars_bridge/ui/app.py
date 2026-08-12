@@ -634,7 +634,11 @@ class AcarsBridgeApp(QMainWindow):
         callsign.setToolTip("Optional — only print this flight")
 
         registration = QLineEdit(self.session.settings.aircraft_registration() or "")
-        registration.setToolTip("Optional — e.g. D-AILA (shown on the print header)")
+        registration.setToolTip(
+            "Optional. Printed on ACARS strip headers. If set, used instead of the "
+            "SimBrief tail for auto weather. Leave empty to omit on ACARS headers "
+            "(OFP tickets still use the SimBrief registration)."
+        )
 
         auto_print = QComboBox()
         auto_print.addItems(["on", "off"])
