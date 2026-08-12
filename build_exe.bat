@@ -58,8 +58,8 @@ echo Done.
 if exist "dist\ACARS-Print-Bridge.exe" (
   echo EXE:       %CD%\dist\ACARS-Print-Bridge.exe
 )
-if exist "dist\acars-bridge.exe" (
-  echo Sidecar:   %CD%\dist\acars-bridge.exe
+for %%F in ("dist\ACARS-Print-Bridge-*-windows-x64.exe") do (
+  echo Portable:  %%~fF
 )
 for %%F in ("dist\*setup.exe") do (
   echo Installer: %%~fF
@@ -67,7 +67,6 @@ for %%F in ("dist\*setup.exe") do (
 echo Log file:  acars-print-bridge.log ^(created next to the EXE on first run^)
 echo.
 echo Run the EXE elevated ^(Administrator^) for Connect.
-echo Keep acars-bridge.exe beside ACARS-Print-Bridge.exe for the portable build.
 echo.
 pause
 exit /b 0

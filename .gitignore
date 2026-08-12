@@ -51,6 +51,8 @@ dist-windows/
 src-tauri/target/
 src-tauri/binaries/*.exe
 !src-tauri/binaries/.gitkeep
+src-tauri/embedded/*.exe
+!src-tauri/embedded/.gitkeep
 web/dist/
 *.tsbuildinfo
 

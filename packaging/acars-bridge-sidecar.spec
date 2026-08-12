@@ -1,10 +1,11 @@
 # -*- mode: python ; coding: utf-8 -*-
-# Headless NDJSON bridge for the Tauri shell (no Qt UI).
+# Headless NDJSON bridge embedded inside the Tauri shell (no Qt UI).
 #
 # Build:
 #   uv sync --group dev
 #   uv run pyinstaller --noconfirm --clean packaging/acars-bridge-sidecar.spec
 #   node scripts/stage-sidecar.mjs
+#   # then tauri build — users only download ACARS-Print-Bridge.exe
 
 from pathlib import Path
 

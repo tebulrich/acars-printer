@@ -1,4 +1,12 @@
 fn main() {
+    // Release builds stage the frozen Python bridge here; the shell embeds it
+    // and extracts under LocalAppData so users only run one EXE.
+    println!("cargo:rerun-if-changed=embedded/acars-bridge.exe");
+    println!("cargo:rustc-check-cfg=cfg(has_embedded_sidecar)");
+    if std::path::Path::new("embedded/acars-bridge.exe").is_file() {
+        println!("cargo:rustc-cfg=has_embedded_sidecar");
+    }
+
     #[cfg(windows)]
     {
         // UAC on every launch — WinDivert / Connect needs Administrator.

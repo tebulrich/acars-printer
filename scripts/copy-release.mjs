@@ -8,7 +8,6 @@ import {
   readFileSync,
 } from "node:fs";
 import { join } from "node:path";
-import { spawnSync } from "node:child_process";
 
 const root = process.cwd();
 const releaseDir = join(root, "src-tauri", "target", "release");
@@ -25,8 +24,14 @@ if (!existsSync(exe)) {
 }
 
 const destExe = join(outDir, "ACARS-Print-Bridge.exe");
+const destVersioned = join(
+  outDir,
+  `ACARS-Print-Bridge-${version}-windows-x64.exe`,
+);
+
 try {
   copyFileSync(exe, destExe);
+  copyFileSync(exe, destVersioned);
 } catch (err) {
   console.error(
     "Could not write dist/ACARS-Print-Bridge.exe — close the running app and retry.",
@@ -35,44 +40,21 @@ try {
   process.exit(1);
 }
 console.log("Copied", exe, "-> dist/ACARS-Print-Bridge.exe");
+console.log("Copied portable", destVersioned);
 
-// Sidecar must sit next to the portable EXE (NSIS already bundles it).
-const sidecarNames = ["acars-bridge.exe", "acars-bridge"];
-let sidecarDest = null;
-for (const name of sidecarNames) {
-  const src = join(releaseDir, name);
-  if (!existsSync(src)) continue;
-  const dest = join(outDir, name.endsWith(".exe") ? name : `${name}.exe`);
-  try {
-    copyFileSync(src, dest);
-    console.log("Copied sidecar", src, "->", dest);
-    sidecarDest = dest;
-    break;
-  } catch (err) {
-    console.error("Could not copy sidecar:", err);
-    process.exit(1);
-  }
-}
-if (!sidecarDest) {
-  // Fall back to staged binaries/ folder (pre-bundle name with target triple).
-  const binDir = join(root, "src-tauri", "binaries");
-  if (existsSync(binDir)) {
-    for (const name of readdirSync(binDir)) {
-      if (!name.startsWith("acars-bridge-") || !name.endsWith(".exe")) continue;
-      const src = join(binDir, name);
-      const dest = join(outDir, "acars-bridge.exe");
-      copyFileSync(src, dest);
-      console.log("Copied staged sidecar", src, "->", dest);
-      sidecarDest = dest;
-      break;
+// Do not ship a peer acars-bridge.exe — it is embedded inside the main EXE.
+for (const name of readdirSync(outDir)) {
+  if (
+    name === "acars-bridge.exe" ||
+    (name.startsWith("ACARS-Print-Bridge-") && name.endsWith(".zip"))
+  ) {
+    try {
+      unlinkSync(join(outDir, name));
+      console.log("Removed leftover", name);
+    } catch {
+      /* ignore locked leftovers */
     }
   }
-}
-if (!sidecarDest) {
-  console.error(
-    "Missing acars-bridge.exe sidecar next to the release EXE. Run npm run build:exe (builds sidecar first).",
-  );
-  process.exit(1);
 }
 
 const nsisDir = join(releaseDir, "bundle", "nsis");
@@ -86,7 +68,6 @@ if (existsSync(nsisDir)) {
     });
   const latest = setups.at(-1);
   if (latest) {
-    // Drop older installers so dist/ only keeps the current release setup.
     for (const name of readdirSync(outDir)) {
       if (name.endsWith("-setup.exe") && name !== latest) {
         try {
@@ -100,21 +81,3 @@ if (existsSync(nsisDir)) {
     console.log("Copied installer", latest);
   }
 }
-
-// Portable zip: both EXEs together (single EXE alone cannot start).
-const zipName = `ACARS-Print-Bridge-${version}-windows-x64.zip`;
-const zipPath = join(outDir, zipName);
-const q = (p) => `'${String(p).replace(/'/g, "''")}'`;
-const ps = `
-$ErrorActionPreference = 'Stop'
-if (Test-Path -LiteralPath ${q(zipPath)}) { Remove-Item -LiteralPath ${q(zipPath)} -Force }
-Compress-Archive -LiteralPath @(${q(destExe)}, ${q(sidecarDest)}) -DestinationPath ${q(zipPath)} -Force
-`;
-const result = spawnSync("powershell.exe", ["-NoProfile", "-Command", ps], {
-  encoding: "utf8",
-});
-if (result.status !== 0) {
-  console.error("Could not create portable zip:", result.stderr || result.stdout);
-  process.exit(1);
-}
-console.log("Created portable zip", zipPath);

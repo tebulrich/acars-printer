@@ -241,23 +241,65 @@ fn project_root() -> PathBuf {
         .unwrap_or(manifest)
 }
 
-fn bundled_sidecar_candidates() -> Vec<PathBuf> {
-    let mut out = Vec::new();
-    let Some(dir) = exe_directory() else {
-        return out;
-    };
-    out.push(dir.join("acars-bridge.exe"));
-    out.push(dir.join("acars-bridge"));
-    // Dev / odd layouts may keep the target-triple suffix.
-    #[cfg(windows)]
+/// Unpack the frozen bridge from inside this EXE into LocalAppData (not next to
+/// the download). End users never see a second app.
+fn ensure_embedded_sidecar(log_path: &Path) -> Result<Option<PathBuf>, BridgeError> {
+    #[cfg(not(has_embedded_sidecar))]
     {
-        out.push(dir.join("acars-bridge-x86_64-pc-windows-msvc.exe"));
+        let _ = log_path;
+        return Ok(None);
     }
-    // Tauri sometimes places resources one level up from a nested install folder.
-    if let Some(parent) = dir.parent() {
-        out.push(parent.join("acars-bridge.exe"));
+
+    #[cfg(has_embedded_sidecar)]
+    {
+        const BYTES: &[u8] = include_bytes!("../embedded/acars-bridge.exe");
+        let version = env!("CARGO_PKG_VERSION");
+        let base = std::env::var_os("LOCALAPPDATA")
+            .map(PathBuf::from)
+            .ok_or_else(|| {
+                BridgeError::Message("LOCALAPPDATA is not set; cannot extract bridge".into())
+            })?;
+        let dir = base
+            .join("acars-bridge")
+            .join("sidecar")
+            .join(version);
+        let dest = dir.join("acars-bridge.exe");
+        let need_write = match std::fs::metadata(&dest) {
+            Ok(meta) => meta.len() as usize != BYTES.len(),
+            Err(_) => true,
+        };
+        if need_write {
+            startup_log(
+                log_path,
+                &format!("extracting embedded bridge to {}", dest.display()),
+            );
+            std::fs::create_dir_all(&dir).map_err(|err| {
+                BridgeError::Message(format!(
+                    "Could not create {} ({err})",
+                    dir.display()
+                ))
+            })?;
+            let tmp = dir.join("acars-bridge.exe.partial");
+            std::fs::write(&tmp, BYTES).map_err(|err| {
+                BridgeError::Message(format!(
+                    "Could not write {} ({err})",
+                    tmp.display()
+                ))
+            })?;
+            std::fs::rename(&tmp, &dest).map_err(|err| {
+                BridgeError::Message(format!(
+                    "Could not finalize {} ({err})",
+                    dest.display()
+                ))
+            })?;
+        } else {
+            startup_log(
+                log_path,
+                &format!("using extracted bridge {}", dest.display()),
+            );
+        }
+        Ok(Some(dest))
     }
-    out
 }
 
 fn python_candidates(root: &Path) -> Vec<PathBuf> {
@@ -294,16 +336,16 @@ fn configure_no_console(cmd: &mut Command) {
 fn spawn_sidecar(root: &Path, log_path: &Path) -> Result<SidecarInner, BridgeError> {
     let mut last_err = String::new();
 
-    for path in bundled_sidecar_candidates() {
-        if !path.is_file() {
-            continue;
-        }
-        startup_log(log_path, &format!("trying bundled sidecar {}", path.display()));
+    if let Some(path) = ensure_embedded_sidecar(log_path)? {
+        startup_log(
+            log_path,
+            &format!("trying embedded bridge {}", path.display()),
+        );
         match spawn_process(&path, &[], root, log_path, /*bundled*/ true) {
             Ok(inner) => return Ok(inner),
             Err(err) => {
                 last_err = err;
-                startup_log(log_path, &format!("bundled sidecar failed: {last_err}"));
+                startup_log(log_path, &format!("embedded bridge failed: {last_err}"));
             }
         }
     }
@@ -326,20 +368,17 @@ fn spawn_sidecar(root: &Path, log_path: &Path) -> Result<SidecarInner, BridgeErr
                 }
             }
         }
-    } else {
+    } else if last_err.is_empty() {
         startup_log(
             log_path,
-            &format!(
-                "no source tree at {} — release builds need acars-bridge.exe next to the app",
-                root.display()
-            ),
+            "release build missing embedded bridge — rebuild with npm run build:exe",
         );
+        last_err = "embedded bridge missing from this build".into();
     }
 
     Err(BridgeError::Message(format!(
         "Could not start the ACARS bridge ({last_err}). \
-Reinstall from GitHub Releases, or keep acars-bridge.exe next to ACARS-Print-Bridge.exe. \
-See acars-print-bridge.log next to the app."
+Reinstall from GitHub Releases. See acars-print-bridge.log next to the app."
     )))
 }
 
@@ -356,7 +395,7 @@ fn spawn_process(
         cmd.current_dir(root)
             .env("PYTHONPATH", root.join("src"));
     }
-    // Shared support log next to the desktop EXE (same folder as the sidecar).
+    // Shared support log next to the desktop EXE.
     cmd.env("ACARS_BRIDGE_EXE_LOG", log_path);
     configure_no_console(&mut cmd);
     let mut child = cmd
