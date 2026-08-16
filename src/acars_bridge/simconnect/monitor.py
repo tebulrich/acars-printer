@@ -38,7 +38,60 @@ class SimSnapshot:
     electrical: dict[str, float] | None = None
     # True when a main exit / interactive door is open; None when unknown.
     main_door_open: bool | None = None
+    # True when the user is in a running flight (not MSFS menu / world hub).
+    # None until SimStart/SimStop or RequestSystemState("Sim") has been seen.
+    in_session: bool | None = None
     detail: str = ""
+
+
+def flight_path_is_menu(path: str) -> bool:
+    """True for MSFS shell flights (main menu / onboard avatar), not a user flight."""
+    if not path:
+        return False
+    name = path.replace("\\", "/").rsplit("/", 1)[-1].lower()
+    return "mainmenu" in name or name in {"menu.flt", "onboard.flt"}
+
+
+def camera_state_is_menu(state: float | None, *, msfs_2024: bool = False) -> bool:
+    """True when CAMERA STATE is a menu / hangar / world-hub view.
+
+    Numbers that mean "not flying" in both MSFS 2020 and 2024 are always
+    treated as menu. 2024-only hub values (World Map = 10, Hangar = 19,
+    Idle = 29+) are used only when the OPEN handshake said 2024 — 10 is
+    drone-aircraft in 2020.
+    """
+    if state is None:
+        return False
+    value = int(round(float(state)))
+    if value in {11, 12, 13} or value >= 29:
+        return True
+    if msfs_2024 and value in {9, 10, 19, 30, 32, 33}:
+        return True
+    return False
+
+
+def resolve_in_session(
+    *,
+    sim_running: bool | None,
+    flight_path: str = "",
+    camera_state: float | None = None,
+    msfs_2024: bool = False,
+) -> bool | None:
+    """Combine Sim system state, loaded .FLT, and camera into one session flag."""
+    if flight_path_is_menu(flight_path):
+        return False
+    if camera_state_is_menu(camera_state, msfs_2024=msfs_2024):
+        return False
+    return sim_running
+
+
+def snapshot_in_world(snapshot: SimSnapshot | None) -> bool:
+    """True when kinematics / electrical are from a real flight, not the MSFS shell."""
+    if snapshot is None or not snapshot.connected:
+        return False
+    if snapshot.source == "simconnect":
+        return snapshot.in_session is True
+    return True
 
 
 # Systems / source buses below this = cold. Never use battery/hot-battery bus
@@ -63,6 +116,10 @@ def aircraft_is_powered(snapshot: SimSnapshot | None) -> bool | None:
     ``None`` means not connected / no usable electrical sample yet → gate holds.
     """
     if snapshot is None or not snapshot.connected:
+        return None
+    if snapshot.source == "simconnect" and snapshot.in_session is not True:
+        # SimConnect is up in the MSFS menu / world hub and often reports
+        # leftover hangar buses as live. Do not treat that as aircraft power.
         return None
     if snapshot.source == "xplane":
         return _xplane_is_powered(snapshot)
@@ -380,6 +437,7 @@ class WindowsSimConnectMonitor:
                             main_bus_voltage=snap.main_bus_voltage,
                             electrical=snap.electrical,
                             main_door_open=snap.main_door_open,
+                            in_session=snap.in_session,
                             detail=snap.detail or "inplace",
                         )
                     )

@@ -15,6 +15,8 @@ from acars_bridge.hoppie.requests import (
 )
 from acars_bridge.hoppie.station import StationTransport
 from acars_bridge.hoppie.types import HoppieMessage, MessageType
+from acars_bridge.hoppie.atis_pick import atis_side_from_snapshot
+from acars_bridge.hoppie.ivao_atis import fetch_ivao_atis
 from acars_bridge.hoppie.vatsim_atis import (
     fetch_vatsim_atis,
     hoppie_vatatis_packets,
@@ -24,6 +26,7 @@ from acars_bridge.models.messages import MessageRepository, StoredMessage
 from acars_bridge.models.settings import SettingsStore
 from acars_bridge.services.fingerprint import fingerprint_for
 from acars_bridge.services.ingestion import MessageIngestionService
+from acars_bridge.weather.awc import fetch_metar_raw, fetch_taf_raw
 
 
 class OutboundMessageService:
@@ -94,6 +97,8 @@ class OutboundMessageService:
         )
 
     def request_weather(self, kind: WeatherKind | str, icao: str) -> list[StoredMessage]:
+        if self._hoppie_credentials() is None:
+            return self._request_weather_public(kind, icao)
         packet = build_weather_packet(kind, icao)
         rows, _unavailable, _print_stats = self._request_inforeq(
             packet, label=str(kind).upper()
@@ -104,32 +109,41 @@ class OutboundMessageService:
         self,
         icao: str,
         *,
-        source: AtisSource | str = AtisSource.VATSIM,
-        side: AtisSide | str | None = AtisSide.DEP,
+        source: AtisSource | str | None = None,
+        side: AtisSide | str | None = None,
         fallback_plain: bool = True,
     ) -> list[StoredMessage]:
-        """Request ATIS via Hoppie, with live VATSIM station awareness.
+        """Request ATIS from one network only (VATSIM or IVAO — never both).
 
-        VATSIM (Hoppie ``vatatis``):
-        1. Look up which ``*_ATIS`` callsigns are online
-        2. Ask Hoppie with the right packet — plain ``vatatis ICAO`` for combined
-           stations (EDDN/EDDS). Only use ``ICAO_D_ATIS`` / ``_A_ATIS`` when that
-           split station is actually online
-        3. If Hoppie still fails, use the public VATSIM datafeed text
+        Combined if that network has it; else dep on ground / arrival in air.
         """
-        source_value = AtisSource(str(source).strip().lower())
+        if source is not None:
+            self._settings.set_atis_source(source)
+        source_value = self._settings.atis_source()
+        resolved = side if side is not None else self._auto_atis_side()
         if source_value is AtisSource.VATSIM:
-            return self._request_vatatis(icao, side=side)
+            return self._request_vatsim_atis(icao, side=resolved)
+        if source_value is AtisSource.IVAO:
+            return self._request_ivao_atis(icao, side=resolved)
 
-        primary = build_atis_packet(icao, source=source_value, side=side)
+        primary = build_atis_packet(icao, source=source_value, side=resolved)
         stored, unavailable, _stats = self._request_inforeq(primary, label="ATIS")
-        if fallback_plain and side is not None and unavailable:
+        if fallback_plain and resolved is not None and unavailable:
             plain = build_atis_packet(icao, source=source_value, side=None)
             if plain != primary:
                 stored, _unavailable, _stats = self._request_inforeq(plain, label="ATIS")
         return stored
 
-    def _request_vatatis(
+    def _auto_atis_side(self) -> AtisSide | None:
+        snap = None
+        if self._session is not None:
+            monitor = getattr(self._session, "simconnect", None)
+            getter = getattr(monitor, "snapshot", None)
+            if callable(getter):
+                snap = getter()
+        return atis_side_from_snapshot(snap)
+
+    def _request_vatsim_atis(
         self,
         icao: str,
         *,
@@ -142,66 +156,65 @@ class OutboundMessageService:
             online = set()
 
         stored: list[StoredMessage] = []
-        for packet in hoppie_vatatis_packets(icao, side=side, online_callsigns=online):
-            stored, unavailable, stats = self._request_inforeq(packet, label="ATIS")
-            self.last_print_stats = stats
-            if not unavailable:
-                return stored
+        if self._hoppie_credentials() is not None:
+            for packet in hoppie_vatatis_packets(icao, side=side, online_callsigns=online):
+                stored, unavailable, stats = self._request_inforeq(packet, label="ATIS")
+                self.last_print_stats = stats
+                if not unavailable:
+                    return stored
 
-        # Only use the live datafeed when a station is online *with text*.
-        # Never resurrect an older ATIS from our local message DB.
-        if online:
-            fallback = self._request_atis_vatsim_fallback(icao, side=side)
-            if fallback is not None:
-                return fallback
-        return stored
+        public = self._ingest_public_atis(
+            icao, fetch_vatsim_atis, side=side, packet_prefix="vatsim-data"
+        )
+        if public is not None:
+            return public
+        if stored:
+            return stored
+        code = normalize_icao(icao)
+        raise HoppieError(
+            f"No VATSIM ATIS for {code}.",
+            hint="Nobody is publishing ATIS there on VATSIM right now.",
+        )
 
-    def _request_atis_vatsim_fallback(
+    def _request_ivao_atis(
         self,
         icao: str,
         *,
         side: AtisSide | str | None,
+    ) -> list[StoredMessage]:
+        public = self._ingest_public_atis(
+            icao, fetch_ivao_atis, side=side, packet_prefix="ivao-data"
+        )
+        if public is not None:
+            return public
+        code = normalize_icao(icao)
+        raise HoppieError(
+            f"No IVAO ATIS for {code}.",
+            hint="Nobody is publishing ATIS there on IVAO right now.",
+        )
+
+    def _ingest_public_atis(
+        self,
+        icao: str,
+        fetch,
+        *,
+        side: AtisSide | str | None,
+        packet_prefix: str,
     ) -> list[StoredMessage] | None:
         try:
-            atis = fetch_vatsim_atis(icao, side=side)
+            atis = fetch(icao, side=side)
         except Exception:
             return None
         if atis is None or not atis.has_text:
             return None
-
-        _logon, callsign = self._require_credentials(allow_observer=True)
         code = normalize_icao(icao)
-        self._settings.set("req_last_icao", code)
-        packet = f"vatsim-data {atis.callsign}"
-        outbound = self._repo.insert_outbound(
-            callsign=callsign,
-            to_station="VATSIM",
-            message_type=MessageType.INFOREQ,
-            body=f"ATIS: {packet}",
-            raw_payload=packet,
-            send_status="sent",
-        )
-        message = HoppieMessage(
-            callsign=callsign,
+        return self._ingest_public_inforeq(
+            packet=f"{packet_prefix} {atis.callsign}",
+            body=atis.body(),
             sender=atis.callsign,
-            recipient=callsign,
-            message_type=MessageType.INFOREQ,
-            raw_payload=packet,
-            normalized_body=atis.body(),
+            label="ATIS",
+            icao=code,
         )
-        if self._ingestion is None:
-            self.last_print_stats = {
-                "stored": 0,
-                "printed": 0,
-                "duplicates": 0,
-                "failed_prints": 0,
-            }
-            return [outbound]
-        self.last_print_stats = self._ingestion.ingest(
-            [message], auto_print=True, force_print=True
-        )
-        stored = self._repo.get_by_fingerprint(fingerprint_for(message))
-        return [outbound, stored] if stored is not None else [outbound]
 
     @staticmethod
     def _atis_body_unavailable(body: str) -> bool:
@@ -336,6 +349,88 @@ class OutboundMessageService:
                 inbounds.append(stored)
         return [outbound, *inbounds], unavailable, print_stats
 
+    def _hoppie_credentials(self) -> tuple[str, str] | None:
+        try:
+            return self._require_credentials(allow_observer=True)
+        except (SendNotAllowedError, HoppieError):
+            return None
+
+    def _observer_callsign(self) -> str:
+        if self._session is not None:
+            from acars_bridge.services.station_identity import resolve_station_identity
+
+            identity = resolve_station_identity(self._session)
+            if identity.callsign:
+                return identity.callsign
+        cs = (self._settings.callsign() or "").strip().upper()
+        return cs or "FO"
+
+    def _ingest_public_inforeq(
+        self,
+        *,
+        packet: str,
+        body: str,
+        sender: str,
+        label: str,
+        icao: str,
+    ) -> list[StoredMessage]:
+        callsign = self._observer_callsign()
+        if icao:
+            self._settings.set("req_last_icao", icao)
+        outbound = self._repo.insert_outbound(
+            callsign=callsign,
+            to_station=sender,
+            message_type=MessageType.INFOREQ,
+            body=f"{label}: {packet}",
+            raw_payload=packet,
+            send_status="sent",
+        )
+        message = HoppieMessage(
+            callsign=callsign,
+            sender=sender,
+            recipient=callsign,
+            message_type=MessageType.INFOREQ,
+            raw_payload=packet,
+            normalized_body=body,
+        )
+        if self._ingestion is None:
+            self.last_print_stats = {
+                "stored": 0,
+                "printed": 0,
+                "duplicates": 0,
+                "failed_prints": 0,
+            }
+            return [outbound]
+        self.last_print_stats = self._ingestion.ingest(
+            [message], auto_print=True, force_print=True
+        )
+        stored = self._repo.get_by_fingerprint(fingerprint_for(message))
+        return [outbound, stored] if stored is not None else [outbound]
+
+    def _request_weather_public(
+        self, kind: WeatherKind | str, icao: str
+    ) -> list[StoredMessage]:
+        kind_value = WeatherKind(str(kind).strip().lower())
+        code = normalize_icao(icao)
+        if kind_value is WeatherKind.METAR:
+            text = fetch_metar_raw(code)
+            label = "METAR"
+        else:
+            text = fetch_taf_raw(code)
+            label = "TAF" if kind_value is WeatherKind.TAF else "SHORTTAF"
+        if not text:
+            raise HoppieError(f"No {label} for {code}.")
+        packet = f"{kind_value.value} {code}"
+        head = text.split("\n", 1)[0].strip().upper()
+        body = text if head.startswith(label) else f"{label} {code}\n{text}"
+        return self._ingest_public_inforeq(
+            packet=packet,
+            body=body,
+            sender="AWC",
+            label=label,
+            icao=code,
+        )
+
     def _require_credentials(self, *, allow_observer: bool = False) -> tuple[str, str]:
         from acars_bridge.services.station_identity import resolve_station_identity
 
@@ -351,12 +446,13 @@ class OutboundMessageService:
             callsign = identity.callsign if identity is not None else self._settings.callsign()
             if not logon:
                 raise HoppieError(
-                    "Set your Hoppie logon code under Network (needed for station mode)."
+                    "Set your Hoppie logon under Network.",
+                    hint="Station mode needs the logon code on the PC.",
                 )
             if not callsign:
                 raise HoppieError(
-                    "No callsign yet — load a SimBrief OFP, print/tap one ACARS "
-                    "message, or set the Network callsign filter."
+                    "No callsign yet.",
+                    hint="Load a SimBrief OFP, print one ACARS strip, or set the Network filter.",
                 )
             return logon, callsign
 
@@ -368,11 +464,8 @@ class OutboundMessageService:
             return wire.logon, wire.from_cs
 
         raise SendNotAllowedError(
-            "No Hoppie/SayIntentions session seen yet. Fenix (and similar) "
-            "ATIS/weather stay on the aircraft’s own network — Connect cannot "
-            "reuse them. Send a Hoppie/SI ACARS message from a supported "
-            "client, or enable Companion station mode under Network when the "
-            "aircraft is not logged into Hoppie."
+            "Can't send from the phone yet.",
+            hint="On the PC: Connect after the plane is on Hoppie, or turn on Companion station mode.",
         )
 
     def _ensure_ok(self, raw: str) -> None:

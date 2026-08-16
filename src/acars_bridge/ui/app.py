@@ -49,8 +49,10 @@ from acars_bridge.printing.discovery import (
     destination_from_label,
     label_for_destination,
     list_printer_choices,
+    normalize_printer_destination,
     parse_tcp_printer,
     tcp_printer_destination,
+    windows_share_path,
 )
 from acars_bridge.services.actions import ActionError, PrinterActions
 from acars_bridge.services.debug_log import DebugLog
@@ -408,22 +410,28 @@ class AcarsBridgeApp(QMainWindow):
         if current in labels:
             printer.setCurrentText(current)
 
+        input_mode = QComboBox()
+        input_mode.addItem("Printer list", "list")
+        input_mode.addItem("Network IP", "ip")
+        input_mode.addItem("Windows path", "path")
+        mode_pick = input_mode.findData(self.session.settings.printer_input_mode())
+        if mode_pick >= 0:
+            input_mode.setCurrentIndex(mode_pick)
+        input_mode.setToolTip("Only one destination type is used at a time.")
+
+        share = windows_share_path(self.session.settings.printer_destination())
+        win_path = QLineEdit(share or "")
+        win_path.setPlaceholderText(r"\\192.168.1.10\POS-80")
+        win_path.setToolTip("Windows shared printer \\\\PC\\queue.")
+
         tcp = parse_tcp_printer(self.session.settings.printer_destination())
         tcp_host = QLineEdit(tcp[0] if tcp else "")
         tcp_host.setPlaceholderText("192.168.1.50")
-        tcp_host.setToolTip(
-            "Raw ESC/POS printer on the LAN. If set, this is used instead of the list."
-        )
+        tcp_host.setToolTip("Raw ESC/POS on port 9100.")
         tcp_port = QSpinBox()
         tcp_port.setRange(1, 65535)
         tcp_port.setValue(tcp[1] if tcp else 9100)
         tcp_port.setToolTip("Usually 9100 (JetDirect / raw).")
-
-        def _sync_printer_list_enabled(text: str = "") -> None:
-            printer.setEnabled(not bool((text or tcp_host.text()).strip()))
-
-        tcp_host.textChanged.connect(_sync_printer_list_enabled)
-        _sync_printer_list_enabled()
 
         width = QComboBox()
         width.addItem("80 mm", "80")
@@ -435,6 +443,7 @@ class AcarsBridgeApp(QMainWindow):
         cut = QComboBox()
         cut.addItems(["on", "off"])
         cut.setCurrentText("on" if self.session.settings.cut_enabled() else "off")
+        cut.setToolTip("On feeds to the cutter / tear bar after each strip.")
 
         print_mode = QComboBox()
         print_mode.addItem("Exact size — set text height in mm/px", "bitmap")
@@ -533,6 +542,8 @@ class AcarsBridgeApp(QMainWindow):
         self._format_widgets = {
             "profile": profile,
             "printer": printer,
+            "input_mode": input_mode,
+            "win_path": win_path,
             "tcp_host": tcp_host,
             "tcp_port": tcp_port,
             "width": width,
@@ -557,11 +568,24 @@ class AcarsBridgeApp(QMainWindow):
         columns.setAlignment(Qt.AlignmentFlag.AlignTop)
 
         left = self._form_column("PRINTER")
+        left.addRow("How to pick", input_mode)
         left.addRow("Printer", printer)
+        left.addRow("Windows path", win_path)
         left.addRow("Network IP", tcp_host)
         left.addRow("Port", tcp_port)
+
+        def _sync_printer_input_mode(_index: int = 0) -> None:
+            chosen = str(input_mode.currentData() or "list")
+            left.setRowVisible(printer, chosen == "list")
+            left.setRowVisible(win_path, chosen == "path")
+            left.setRowVisible(tcp_host, chosen == "ip")
+            left.setRowVisible(tcp_port, chosen == "ip")
+
+        input_mode.currentIndexChanged.connect(_sync_printer_input_mode)
+        _sync_printer_input_mode()
+        self._sync_printer_input_mode = _sync_printer_input_mode
         left.addRow("Paper width", width)
-        left.addRow("Cut / tear assist", cut)
+        left.addRow("Cut paper after print", cut)
         left.addRow("Print mode", print_mode)
         left.addRow("Text height", glyph_row)
         left.addRow("Space between lines", print_line_gap)
@@ -711,6 +735,15 @@ class AcarsBridgeApp(QMainWindow):
         wx_auto_nm.setToolTip("Print when this close to destination (great-circle NM).")
         wx_kind_checks: dict[str, QCheckBox] = {}
         wx_kind_labels = {"atis": "ATIS", "metar": "METAR", "taf": "TAF"}
+        atis_source = QComboBox()
+        atis_source.addItem("VATSIM", "vatatis")
+        atis_source.addItem("IVAO", "ivaoatis")
+        atis_idx = atis_source.findData(self.session.settings.atis_source().value)
+        if atis_idx >= 0:
+            atis_source.setCurrentIndex(atis_idx)
+        atis_source.setToolTip(
+            "Phone ATIS and auto dest ATIS use this network only. No fallback."
+        )
         enabled_wx = self.session.settings.wx_auto_kinds()
         for key in self.session.settings.WX_AUTO_KIND_CHOICES:
             box = QCheckBox(wx_kind_labels.get(key, key))
@@ -819,6 +852,7 @@ class AcarsBridgeApp(QMainWindow):
             "wx_auto_enabled": wx_auto_enabled,
             "wx_auto_nm": wx_auto_nm,
             "wx_auto_kinds": wx_kind_checks,
+            "atis_source": atis_source,
             "hotkeys": hotkeys,
             "hotkey_edits": hotkey_edits,
             "hotkey_labels": hotkey_labels,
@@ -934,6 +968,10 @@ class AcarsBridgeApp(QMainWindow):
         nm_wrap = QWidget()
         nm_wrap.setLayout(nm_row)
         wx_col.addWidget(nm_wrap)
+        atis_lbl = QLabel("ATIS network")
+        atis_lbl.setObjectName("Muted")
+        wx_col.addWidget(atis_lbl)
+        wx_col.addWidget(w["atis_source"])
         for key in self.session.settings.WX_AUTO_KIND_CHOICES:
             wx_col.addWidget(w["wx_auto_kinds"][key])
         wx_col.addStretch(1)
@@ -1687,8 +1725,15 @@ class AcarsBridgeApp(QMainWindow):
         w = self._format_widgets
         s = self.session.settings
         tcp = parse_tcp_printer(s.printer_destination())
+        w["win_path"].setText(windows_share_path(s.printer_destination()) or "")
         w["tcp_host"].setText(tcp[0] if tcp else "")
         w["tcp_port"].setValue(tcp[1] if tcp else 9100)
+        mode_idx = w["input_mode"].findData(s.printer_input_mode())
+        if mode_idx >= 0:
+            w["input_mode"].setCurrentIndex(mode_idx)
+        sync_mode = getattr(self, "_sync_printer_input_mode", None)
+        if callable(sync_mode):
+            sync_mode()
         width_idx = w["width"].findData(s.paper_width())
         if width_idx >= 0:
             w["width"].setCurrentIndex(width_idx)
@@ -1786,11 +1831,18 @@ class AcarsBridgeApp(QMainWindow):
 
     def _save_format_settings(self, *, quiet: bool = False) -> None:
         w = self._format_widgets
-        tcp_dest = tcp_printer_destination(
-            w["tcp_host"].text(), w["tcp_port"].value()
-        )
-        if tcp_dest:
-            self.session.settings.set_printer_destination(tcp_dest)
+        pick = str(w["input_mode"].currentData() or "list")
+        self.session.settings.set_printer_input_mode(pick)
+        if pick == "path":
+            typed = w["win_path"].text().strip()
+            self.session.settings.set_printer_destination(
+                normalize_printer_destination(typed) if typed else "console"
+            )
+        elif pick == "ip":
+            self.session.settings.set_printer_destination(
+                tcp_printer_destination(w["tcp_host"].text(), w["tcp_port"].value())
+                or "console"
+            )
         else:
             printer_label = w["printer"].currentText().strip() or "console (log only)"
             self.session.settings.set_printer_destination(
@@ -1871,6 +1923,7 @@ class AcarsBridgeApp(QMainWindow):
         self.session.settings.set_wx_auto_kinds(
             [key for key, box in w["wx_auto_kinds"].items() if box.isChecked()]
         )
+        self.session.settings.set_atis_source(w["atis_source"].currentData() or "vatatis")
         grace_min = int(w["simbrief_grace"].value())
         self.session.settings.set_simbrief_post_landing_grace_seconds(grace_min * 60)
         sterile_feet = w["sterile_agl"].currentData()
@@ -1935,6 +1988,9 @@ class AcarsBridgeApp(QMainWindow):
                     ),
                     apu_generator_on=(
                         snap.apu_generator_on if isinstance(snap, _Snap) else None
+                    ),
+                    in_session=(
+                        snap.in_session if isinstance(snap, _Snap) else None
                     ),
                 )
             if was_blocking and not now_blocking:
@@ -2047,6 +2103,23 @@ class AcarsBridgeApp(QMainWindow):
         ext = getattr(snap, "external_power_on", None) if isinstance(snap, SimSnapshot) else None
         bus_txt = f"{bus:.0f} V" if isinstance(bus, (int, float)) else "—"
         ext_txt = "on" if ext is True else "off" if ext is False else "—"
+
+        source = getattr(snap, "source", "") if isinstance(snap, SimSnapshot) else ""
+        if (
+            powered is None
+            and source == "simconnect"
+            and getattr(snap, "in_session", None) is not True
+        ):
+            label = "PWR —"
+            if queued:
+                label = f"PWR — · q{queued}"
+            self.power_chip.setText(label)
+            self.power_chip.setStyleSheet(self._chip_color_style(COLORS["muted"]))
+            self.power_chip.setToolTip(
+                "MSFS is open, but you are not in a flight yet. "
+                "Menu / world hub electrical readings are ignored."
+            )
+            return
 
         if powered is True:
             label = "PWR on"

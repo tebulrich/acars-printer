@@ -55,7 +55,7 @@ def test_fetch_vatsim_atis_prefers_online_combined():
         assert "NUERNBERG INFORMATION J" in hit.body()
 
 
-def test_fetch_vatsim_atis_prefers_split_when_present():
+def test_fetch_vatsim_atis_combined_wins_over_split():
     payload = {
         "atis": [
             {
@@ -73,4 +73,28 @@ def test_fetch_vatsim_atis_prefers_split_when_present():
     with httpx.Client(transport=_DataTransport(payload)) as client:
         dep = fetch_vatsim_atis("EDDS", side=AtisSide.DEP, client=client)
         assert dep is not None
-        assert dep.callsign == "EDDS_D_ATIS"
+        assert dep.callsign == "EDDS_ATIS"
+
+
+def test_fetch_vatsim_atis_uses_dep_when_no_combined():
+    payload = {
+        "atis": [
+            {
+                "callsign": "KMIA_D_ATIS",
+                "atis_code": "D",
+                "text_atis": ["DEP INFO D"],
+            },
+            {
+                "callsign": "KMIA_A_ATIS",
+                "atis_code": "A",
+                "text_atis": ["ARR INFO A"],
+            },
+        ]
+    }
+    with httpx.Client(transport=_DataTransport(payload)) as client:
+        dep = fetch_vatsim_atis("KMIA", side=AtisSide.DEP, client=client)
+        assert dep is not None
+        assert dep.callsign == "KMIA_D_ATIS"
+        arr = fetch_vatsim_atis("KMIA", side=AtisSide.ARR, client=client)
+        assert arr is not None
+        assert arr.callsign == "KMIA_A_ATIS"

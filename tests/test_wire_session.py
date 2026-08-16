@@ -100,9 +100,10 @@ def test_outbound_blocked_without_station_or_wire(tmp_path):
     session.settings.set_callsign("SWR14")
     with pytest.raises(SendNotAllowedError) as exc:
         session.outbound.send_telex("ATC", "hi")
-    msg = str(exc.value).lower()
-    assert "fenix" in msg or "hoppie" in msg
-    assert "station" in msg
+    msg = str(exc.value)
+    assert "fenix" not in msg.lower()
+    assert len(msg) < 80
+    assert exc.value.hint
     session.close()
 
 

@@ -32,8 +32,8 @@ interface Props {
   onApplyProfile: (id: string) => void;
   onSaveProfile: () => void;
   onDeleteProfile: () => void;
-  onSaveFormat: () => void;
-  onSaveAndTest: () => void;
+  onSaveFormat: (patch?: Partial<Settings>) => void;
+  onSaveAndTest: (patch?: Partial<Settings>) => void;
   onReset: () => void;
   onSaveSettings: () => void;
   onPrintOfp: () => void;

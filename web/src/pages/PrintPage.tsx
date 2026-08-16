@@ -35,6 +35,24 @@ export function PrintPage({ settings, onChange, onSave }: Props) {
     <section className="space-y-4">
       <div className="rounded border border-[var(--border)] bg-[var(--surface)] p-4">
         <h2 className="mb-1 text-sm font-semibold text-[var(--text)]">
+          ATIS network
+        </h2>
+        <p className="mb-3 text-sm text-[var(--muted)]">
+          Phone ATIS and auto dest ATIS use this network only. VATSIM and IVAO
+          publish different letters.
+        </p>
+        <select
+          className="inp max-w-xs text-sm"
+          value={settings.atis_source}
+          onChange={(e) => onChange({ atis_source: e.target.value })}
+        >
+          <option value="vatatis">VATSIM</option>
+          <option value="ivaoatis">IVAO</option>
+        </select>
+      </div>
+
+      <div className="rounded border border-[var(--border)] bg-[var(--surface)] p-4">
+        <h2 className="mb-1 text-sm font-semibold text-[var(--text)]">
           Which ACARS messages to auto-print
         </h2>
         <p className="mb-3 text-sm text-[var(--muted)]">

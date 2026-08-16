@@ -5,6 +5,7 @@
   let oldestId = null;
   let newestId = 0;
   let busy = false;
+  let canSend = false;
   let detailId = null;
 
   function headers() {
@@ -18,7 +19,9 @@
     });
     const data = await res.json().catch(() => ({}));
     if (!res.ok) {
-      throw new Error(data.error || `HTTP ${res.status}`);
+      const err = new Error(data.error || `HTTP ${res.status}`);
+      err.hint = data.hint || "";
+      throw err;
     }
     return data;
   }
@@ -29,13 +32,26 @@
     el.classList.toggle("error", !!error);
     el.classList.remove("hidden");
     clearTimeout(toast._t);
-    toast._t = setTimeout(() => el.classList.add("hidden"), error ? 7000 : 3500);
+    toast._t = setTimeout(() => el.classList.add("hidden"), error ? 4000 : 2800);
+  }
+
+  function showError(err) {
+    toast(err.message || "Request failed", true);
+    if (err.hint) $("statusLine").textContent = err.hint;
   }
 
   function setBusy(on) {
     busy = on;
     document.querySelectorAll("button.accent, button.primary").forEach((b) => {
-      b.disabled = on;
+      if (on) {
+        b.disabled = true;
+        return;
+      }
+      if ((b.id === "btnTelex" || b.id === "btnPdc") && !canSend) {
+        b.disabled = true;
+        return;
+      }
+      b.disabled = false;
     });
   }
 
@@ -124,7 +140,7 @@
       $("detail").classList.remove("hidden");
       $("detail").setAttribute("aria-hidden", "false");
     } catch (e) {
-      toast(e.message, true);
+      showError(e);
     }
   }
 
@@ -140,7 +156,7 @@
       $("detail").classList.add("hidden");
       await loadInbox({ reset: true });
     } catch (e) {
-      toast(e.message, true);
+      showError(e);
     } finally {
       setBusy(false);
     }
@@ -207,26 +223,30 @@
     $("countPill").textContent = `${s.message_count || 0} msg`;
     let line;
     if (s.companion_station_enabled) {
-      line =
-        "Station mode — this PC polls and can send weather, ATIS, telex, and PDC.";
+      line = "Station mode — weather, ATIS, telex, and PDC.";
     } else if (s.can_send && s.wire_session && s.wire_session.ready) {
-      line =
-        "You are the FO — weather, ATIS, telex, PDC, and WILCO go through the aircraft.";
+      line = "Connected — weather, ATIS, telex, and PDC go through the aircraft.";
     } else {
-      line =
-        "Inbox only until Connect sees one Hoppie/SayIntentions exchange, or turn on station mode when the plane is not on Hoppie.";
+      line = "Weather and ATIS work now. Telex and PDC need Connect or station mode.";
     }
     if (s.station_error) line = s.station_error;
     if (!s.can_send) {
       if (s.companion_station_enabled && !s.has_logon) {
-        line =
-          "Station mode needs a Hoppie logon under Network on the desktop.";
+        line = "Station mode needs a Hoppie logon under Network on the PC.";
       } else if (s.companion_station_enabled && !s.has_callsign) {
-        line =
-          "No callsign yet — load a SimBrief OFP, tap/print one ACARS message, or set the Network callsign filter.";
+        line = "No callsign yet — load a SimBrief OFP or set the Network filter.";
       }
     }
     $("statusLine").textContent = line;
+    canSend = !!s.can_send;
+    $("btnTelex").disabled = busy || !canSend;
+    $("btnPdc").disabled = busy || !canSend;
+    $("telexHint").textContent = s.can_send
+      ? "Sends as the aircraft callsign."
+      : "Needs Connect or Companion station mode on the PC.";
+    $("pdcHint").textContent = s.can_send
+      ? "Standard Hoppie PDC telex to the ATC facility (usually the airport ICAO)."
+      : "Needs Connect or Companion station mode on the PC.";
 
     if (s.wx_icao && !$("wxIcao").value) $("wxIcao").value = s.wx_icao;
     else if (s.last_icao && !$("wxIcao").value) $("wxIcao").value = s.last_icao;
@@ -243,6 +263,10 @@
     if (d.aircraft_type && !$("pdcType").value) $("pdcType").value = d.aircraft_type;
     if (d.stand && !$("pdcStand").value) $("pdcStand").value = d.stand;
     if (d.atis_letter && !$("pdcAtis").value) $("pdcAtis").value = d.atis_letter;
+    const atisSel = $("atisSource");
+    if (atisSel && s.atis_source && !atisSel.dataset.userSet) {
+      atisSel.value = s.atis_source;
+    }
   }
 
   document.querySelectorAll(".tab").forEach((tab) => {
@@ -269,7 +293,7 @@
       });
       toast(r.result === "deferred" ? "Print deferred" : "Printed");
     } catch (e) {
-      toast(e.message, true);
+      showError(e);
     } finally {
       setBusy(false);
     }
@@ -279,10 +303,10 @@
   });
 
   $("btnRefresh").addEventListener("click", () => {
-    loadInbox({ reset: true }).catch((e) => toast(e.message, true));
+    loadInbox({ reset: true }).catch((e) => showError(e));
   });
   $("btnMore").addEventListener("click", () => {
-    loadOlder().catch((e) => toast(e.message, true));
+    loadOlder().catch((e) => showError(e));
   });
 
   document.querySelectorAll("[data-wx]").forEach((btn) => {
@@ -299,11 +323,15 @@
         await loadInbox({ reset: true });
         document.querySelector('.tab[data-view="inbox"]').click();
       } catch (e) {
-        toast(e.message, true);
+        showError(e);
       } finally {
         setBusy(false);
       }
     });
+  });
+
+  $("atisSource").addEventListener("change", () => {
+    $("atisSource").dataset.userSet = "1";
   });
 
   $("btnAtis").addEventListener("click", async () => {
@@ -311,19 +339,16 @@
     setBusy(true);
     try {
       const icao = $("wxIcao").value.trim().toUpperCase();
+      const source = $("atisSource").value || "vatatis";
       await api("/api/atis", {
         method: "POST",
-        body: JSON.stringify({
-          icao,
-          side: $("atisSide").value,
-          source: "vatatis",
-        }),
+        body: JSON.stringify({ icao, source }),
       });
       toast(`ATIS ${icao} requested`);
       await loadInbox({ reset: true });
       document.querySelector('.tab[data-view="inbox"]').click();
     } catch (e) {
-      toast(e.message, true);
+      showError(e);
     } finally {
       setBusy(false);
     }
@@ -345,7 +370,7 @@
       await loadInbox({ reset: true });
       document.querySelector('.tab[data-view="inbox"]').click();
     } catch (e) {
-      toast(e.message, true);
+      showError(e);
     } finally {
       setBusy(false);
     }
@@ -370,7 +395,7 @@
       await loadInbox({ reset: true });
       document.querySelector('.tab[data-view="inbox"]').click();
     } catch (e) {
-      toast(e.message, true);
+      showError(e);
     } finally {
       setBusy(false);
     }
@@ -385,7 +410,7 @@
         pollNew();
       }, 2500);
     } catch (e) {
-      toast(e.message, true);
+      showError(e);
       $("statusLine").textContent = e.message;
     }
   }

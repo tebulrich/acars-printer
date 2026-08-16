@@ -259,6 +259,11 @@ def test_wx_settings_roundtrip(app_session) -> None:
     assert s.wx_auto_enabled() is True
     assert s.wx_auto_nm() == 100
     assert s.wx_auto_kinds() == {"atis", "metar"}
+    from acars_bridge.hoppie.requests import AtisSource
+
+    assert s.atis_source() is AtisSource.VATSIM
+    s.set_atis_source("ivao")
+    assert s.atis_source() is AtisSource.IVAO
 
 
 def test_wx_auto_nm_migrates_legacy_factory_default(tmp_path) -> None:
@@ -286,3 +291,6 @@ def test_as_inforeq_payload_prefixes_and_skips_existing() -> None:
     ) == "METAR EDDM\nEDDM 091020Z 27008KT CAVOK"
     already = "VATATIS EDDM_A\nINFO M"
     assert _as_inforeq_payload("auto_atis", "EDDM", already) == already
+    assert _as_inforeq_payload(
+        "auto_atis_ivao", "EDDB", "INFO M\nRWY 24L"
+    ) == "IVAOATIS EDDB\nINFO M\nRWY 24L"

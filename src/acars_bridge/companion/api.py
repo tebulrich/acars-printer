@@ -8,7 +8,7 @@ from typing import TYPE_CHECKING, Any
 from acars_bridge.companion.lan import lan_ipv4_addresses, primary_lan_ip
 from acars_bridge.hoppie.cpdlc import reply_choices
 from acars_bridge.hoppie.errors import HoppieError, SendNotAllowedError
-from acars_bridge.hoppie.requests import AtisSide, AtisSource, WeatherKind
+from acars_bridge.hoppie.requests import WeatherKind
 from acars_bridge.hoppie.types import MessageType
 
 if TYPE_CHECKING:
@@ -116,6 +116,7 @@ class CompanionApi:
             "has_callsign": bool(display_cs or identity.callsign),
             "wire_session": wire,
             "can_send": can_send,
+            "can_wx": True,
             "pdc_defaults": {
                 "station": s.get("req_pdc_station") or "",
                 "departure": s.get("req_pdc_dep") or "",
@@ -125,6 +126,7 @@ class CompanionApi:
                 "atis_letter": s.get("req_pdc_atis") or "",
             },
             "last_icao": s.get("req_last_icao") or "",
+            "atis_source": s.atis_source().value,
             **self._simbrief_airports(),
         }
 
@@ -179,18 +181,14 @@ class CompanionApi:
         self,
         icao: str,
         *,
-        side: str | None = "dep",
-        source: str = "vatatis",
+        side: str | None = None,
+        source: str = "",
     ) -> dict[str, Any]:
-        side_val: AtisSide | str | None
-        if side in (None, "", "none", "plain"):
-            side_val = None
-        else:
-            side_val = AtisSide(str(side).strip().lower())
+        del side  # Phase picks dep/arr; combined wins when online.
+        chosen = source or self.session.settings.atis_source().value
         rows = self.session.outbound.request_atis(
             icao,
-            source=AtisSource(source),
-            side=side_val,
+            source=chosen,
         )
         self.runtime.emit_event("new_messages", {"count": len(rows)})
         return {
@@ -225,13 +223,14 @@ class CompanionApi:
 
 
 def error_payload(exc: BaseException) -> tuple[int, dict[str, Any]]:
+    hint = str(getattr(exc, "hint", "") or "")
     if isinstance(exc, KeyError):
-        return 404, {"ok": False, "error": str(exc)}
+        return 404, {"ok": False, "error": str(exc), "hint": hint}
     if isinstance(exc, SendNotAllowedError):
-        return 403, {"ok": False, "error": str(exc)}
+        return 403, {"ok": False, "error": str(exc), "hint": hint}
     if isinstance(exc, (HoppieError, ValueError)):
-        return 400, {"ok": False, "error": str(exc)}
-    return 500, {"ok": False, "error": str(exc)}
+        return 400, {"ok": False, "error": str(exc), "hint": hint}
+    return 500, {"ok": False, "error": str(exc), "hint": hint}
 
 
 def dumps(data: Any) -> bytes:

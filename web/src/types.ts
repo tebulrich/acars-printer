@@ -34,6 +34,7 @@ export interface Settings {
   acars_network: string;
   networks: { id: string; label: string }[];
   printer_destination: string;
+  printer_input_mode: string;
   paper_width: string;
   cut_enabled: boolean;
   print_render_mode: string;
@@ -58,6 +59,7 @@ export interface Settings {
   wx_auto_nm: number;
   wx_auto_kinds: string[];
   wx_auto_kind_choices: string[];
+  atis_source: string;
   hotkeys_enabled: boolean;
   hotkey_bindings: Record<string, string>;
   hotkey_actions: string[];

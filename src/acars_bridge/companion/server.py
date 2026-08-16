@@ -150,8 +150,7 @@ class CompanionServer:
                             200,
                             api.request_atis(
                                 str(body.get("icao") or ""),
-                                side=body.get("side", "dep"),
-                                source=str(body.get("source") or "vatatis"),
+                                source=str(body.get("source") or ""),
                             ),
                         )
                         return

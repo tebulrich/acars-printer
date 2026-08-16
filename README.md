@@ -62,7 +62,9 @@ override the aircraft key - the plane's requests pass through unchanged.
 
 Plug in and install your printer the normal Windows way (POS-80 thermal, etc.)
 until it shows up under Windows printers. The app talks to printers Windows
-already knows about.
+already knows about. Under Printer, pick one method: the Windows list, a typed
+`\\192.168.1.10\POS-80` share, or raw **Network IP + port 9100** (JetDirect /
+ESC/POS — not a Windows share).
 
 ### 3. Download and start the app
 
@@ -86,7 +88,7 @@ the tray menu.
 
 | Setup block | What to set |
 | --- | --- |
-| **Printer** | Destination (Windows queue or LAN IP + port 9100), paper width/cut, wrap columns, strip look, named profiles. Use **Save and test print**. |
+| **Printer** | **Destination** (list, typed `\\PC\queue`, or raw IP:9100 — plus paper width and cut), then **Strip look** (preset, size, wrap, margins). Use **Save and test print**. |
 | **Network** | Hoppie / SayIntentions / PMDG GFO, callsign filter, registration, phone companion, optional station mode. |
 | **Print** | Which ACARS types, OFP sections, and destination weather auto-print. |
 | **Flight** | Auto-print, auto-connect, sterile/power gates, SimBrief, **Print OFP** / Unlock. |
@@ -113,11 +115,16 @@ the phone request weather / ATIS / telex / PDC when the aircraft cannot.
 3. On your phone: **Inbox** (open a message to **Print** or send **WILCO**),
    **WX / ATIS**, **Telex**, **PDC**.
 
-Phone sends work in two ways:
+**Weather / ATIS** on the phone always work: pick **VATSIM** or **IVAO** (no
+fallback — they are different ATIS letters), plus aviationweather.gov. Combined
+ATIS if that network has it, otherwise departure on the ground and arrival in
+the air. IVAO has no dedicated ATIS station; each ATC publishes its own
+`atis.lines` (TWR first). Set the same network under **Print** for auto dest ATIS.
+
+**Telex / PDC / WILCO** need one of:
 
 - **Connect/tap active:** after one **Hoppie / SayIntentions** ACARS exchange
-  the phone reuses the plane’s live session (no station mode). Fenix ATIS and
-  other in-aircraft weather do not count — that traffic never hits Hoppie.
+  the phone reuses the plane’s live session (no station mode).
 - **Offline (no MSFS owning the callsign):** turn on **Network → Companion
   station mode** and save a Hoppie logon once. Callsign auto-follows SimBrief
   or the last ACARS message when the Network filter is empty.
@@ -165,6 +172,8 @@ Click **Disconnect**, then close the app.
 - **Only when powered?** Prints wait until the aircraft is electrically up
   (MSFS SimConnect, or an X-Plane engine / APU / ground-power source).
   Then ~10 s settle.
+  MSFS **PWR on** only after you are in a flight — the main menu / world hub
+  can look electrically live and is ignored.
   X-Plane **PWR on** means an engine is running, the APU is up, or GPU is
   selected — not Laminar bus volts (study-level airliners leave those fake).
   **PWR off** means those sources were sampled and are all dark (prints hold).
@@ -218,9 +227,10 @@ the destination (default 180 NM) and the sterile/power gate allows printing.
 Short hops that start already inside the ring still print once after liftoff —
 not while sitting near origin on the ground.
 
-Sources: VATSIM public ATIS (when ATIS is checked) and
-[aviationweather.gov](https://aviationweather.gov/) METAR/TAF. Own toggles —
-does not require the ACARS Info/ATIS-METAR mute checkbox. No invented weather.
+Sources: VATSIM or IVAO public ATIS (Print → ATIS network, when ATIS is
+checked) and [aviationweather.gov](https://aviationweather.gov/) METAR/TAF.
+Own toggles — does not require the ACARS Info/ATIS-METAR mute checkbox. No
+invented weather.
 
 ## Requirements
 

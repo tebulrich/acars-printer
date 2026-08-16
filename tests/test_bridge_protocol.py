@@ -217,6 +217,36 @@ def test_power_chip_xplane_ground_power_says_on(runtime: BridgeRuntime) -> None:
     assert "ground" in (chip.get("tip") or "").lower()
 
 
+def test_power_chip_msfs_menu_is_not_on(runtime: BridgeRuntime) -> None:
+    from acars_bridge.simconnect.monitor import SimSnapshot
+
+    class _Snap:
+        def snapshot(self) -> SimSnapshot:
+            return SimSnapshot(
+                connected=True,
+                source="simconnect",
+                in_session=False,
+                main_bus_voltage=28.0,
+                electrical={
+                    "CIRCUIT GENERAL PANEL ON": 1.0,
+                    "ELECTRICAL MAIN BUS VOLTAGE": 28.0,
+                },
+                detail="inplace",
+            )
+
+        def start(self) -> None:
+            return None
+
+        def stop(self) -> None:
+            return None
+
+    runtime.session.simconnect = _Snap()  # type: ignore[assignment]
+    chip = runtime._power_chip()
+    assert chip["text"] == "PWR —"
+    tip = (chip.get("tip") or "").lower()
+    assert "flight" in tip
+
+
 def test_sterile_off_is_a_settings_choice(runtime: BridgeRuntime) -> None:
     data = _ok(runtime, "get_settings")
     assert 0 in data["sterile_agl_choices"]
@@ -307,6 +337,15 @@ def test_save_format_and_test_print(runtime: BridgeRuntime) -> None:
     assert fmt["paper_width"] == "58"
     _ok(runtime, "test_print")
     _ok(runtime, "feed")
+
+
+def test_save_format_accepts_unc_printer_path(runtime: BridgeRuntime) -> None:
+    fmt = _ok(
+        runtime,
+        "save_format",
+        printer_destination=r"\\192.168.1.10\POS-80",
+    )
+    assert fmt["printer_destination"] == r"win32://\\192.168.1.10\POS-80"
 
 
 def test_print_profiles_apply_save_delete(runtime: BridgeRuntime) -> None:

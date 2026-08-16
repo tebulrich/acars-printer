@@ -27,7 +27,7 @@ from acars_bridge.simbrief.tickets import (
     render_loadsheet_ticket,
     render_takeoff_data_ticket,
 )
-from acars_bridge.simconnect.monitor import SimSnapshot
+from acars_bridge.simconnect.monitor import SimSnapshot, snapshot_in_world
 
 log = logging.getLogger(__name__)
 
@@ -195,18 +195,19 @@ class SimBriefWatcher:
 
     def tick_local(self, snapshot: SimSnapshot | None = None) -> None:
         """SimConnect-driven phase + final triggers (no HTTP). Safe on the UI thread."""
+        world = snapshot if snapshot_in_world(snapshot) else None
         if not self.settings.simbrief_enabled():
             self.state.status = "disabled"
             # Still advance airborne/landing if a lock survived from earlier.
             if self.state.phase != WatcherPhase.POLLING:
-                self._update_flight_phase(snapshot, self._now_fn())
+                self._update_flight_phase(world, self._now_fn())
             return
 
         user = self.settings.simbrief_user()
         if not user:
             self.state.status = "set SimBrief username/ID"
             if self.state.phase != WatcherPhase.POLLING:
-                self._update_flight_phase(snapshot, self._now_fn())
+                self._update_flight_phase(world, self._now_fn())
             return
 
         now_mono = self._now_fn()
@@ -225,7 +226,7 @@ class SimBriefWatcher:
             self.unlock(reason="max lock elapsed")
             return
 
-        self._update_flight_phase(snapshot, now_mono)
+        self._update_flight_phase(world, now_mono)
 
         if (
             self.state.phase == WatcherPhase.POST_LANDING
@@ -250,7 +251,7 @@ class SimBriefWatcher:
                     f"locked · {plan.callsign} {plan.origin_icao}-{plan.dest_icao}"
                 )
                 self._persist()
-            elif self._should_print_final(snapshot, now_utc):
+            elif self._should_print_final(world, now_utc):
                 self._print_final(self.state.plan, reason="final trigger")
                 self.state.final_printed = True
                 self.state.phase = WatcherPhase.FINAL_PRINTED

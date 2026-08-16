@@ -6,7 +6,11 @@ import time
 from collections.abc import Callable
 from dataclasses import dataclass
 
-from acars_bridge.simconnect.monitor import SimSnapshot, aircraft_is_powered
+from acars_bridge.simconnect.monitor import (
+    SimSnapshot,
+    aircraft_is_powered,
+    snapshot_in_world,
+)
 
 log = logging.getLogger(__name__)
 
@@ -37,6 +41,8 @@ def compute_sterile(
     is never blocked indefinitely.
     """
     if snapshot is None or not snapshot.connected:
+        return False
+    if not snapshot_in_world(snapshot):
         return False
     limits = thresholds or SterileThresholds()
     if limits.agl_ft <= 0:

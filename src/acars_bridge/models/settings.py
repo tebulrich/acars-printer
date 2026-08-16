@@ -155,7 +155,26 @@ class SettingsStore:
         return self.get("printer_destination", "console") or "console"
 
     def set_printer_destination(self, destination: str) -> None:
-        self.set("printer_destination", destination)
+        from acars_bridge.printing.discovery import normalize_printer_destination
+
+        self.set("printer_destination", normalize_printer_destination(destination))
+
+    def printer_input_mode(self) -> str:
+        raw = (self.get("printer_input_mode") or "").strip().lower()
+        if raw in {"list", "ip", "path"}:
+            return raw
+        from acars_bridge.printing.discovery import infer_printer_input_mode
+
+        inferred = infer_printer_input_mode(self.printer_destination())
+        if raw == "manual":
+            return inferred if inferred in {"ip", "path"} else "path"
+        return inferred
+
+    def set_printer_input_mode(self, mode: object) -> None:
+        value = str(mode or "").strip().lower()
+        if value not in {"list", "ip", "path"}:
+            value = "list"
+        self.set("printer_input_mode", value)
 
     def paper_width(self) -> str:
         value = self.get("paper_width", "80") or "80"
@@ -796,6 +815,34 @@ class SettingsStore:
             }
         )
         self.set("wx_auto_kinds", ",".join(cleaned))
+
+    def atis_source(self) -> AtisSource:
+        from acars_bridge.hoppie.requests import AtisSource
+
+        return self._parse_atis_source(self.get("atis_source", AtisSource.VATSIM.value))
+
+    def set_atis_source(self, source: object) -> None:
+        self.set("atis_source", self._parse_atis_source(source).value)
+
+    @staticmethod
+    def _parse_atis_source(source: object) -> AtisSource:
+        from acars_bridge.hoppie.requests import AtisSource
+
+        raw = str(source or "").strip().lower()
+        aliases = {
+            "vatsim": AtisSource.VATSIM,
+            "vatatis": AtisSource.VATSIM,
+            "ivao": AtisSource.IVAO,
+            "ivaoatis": AtisSource.IVAO,
+            "pilotedge": AtisSource.PILOTEDGE,
+            "peatis": AtisSource.PILOTEDGE,
+        }
+        if raw in aliases:
+            return aliases[raw]
+        try:
+            return AtisSource(raw)
+        except ValueError:
+            return AtisSource.VATSIM
 
     # --- Phone companion (LAN web UI) ---------------------------------------
 

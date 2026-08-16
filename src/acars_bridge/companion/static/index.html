@@ -49,8 +49,9 @@
           <div class="card">
             <h2>Weather &amp; ATIS</h2>
             <p class="hint">
-              Destination fills from SimBrief when a plan is locked. Bookmark this
-              page — it stays on your Wi-Fi, no login.
+              Pick VATSIM or IVAO — they publish different ATIS letters.
+              Combined if that network has it; otherwise departure on the ground
+              and arrival in the air. METAR/TAF from aviationweather.gov.
             </p>
             <label>
               ICAO
@@ -63,29 +64,27 @@
                 spellcheck="false"
               />
             </label>
+            <label>
+              ATIS network
+              <select id="atisSource">
+                <option value="vatatis">VATSIM</option>
+                <option value="ivaoatis">IVAO</option>
+              </select>
+            </label>
             <div class="btn-row">
               <button type="button" class="primary" data-wx="metar">METAR</button>
               <button type="button" class="primary" data-wx="taf">TAF</button>
               <button type="button" class="primary" data-wx="shorttaf">Short TAF</button>
             </div>
-            <label>
-              ATIS side
-              <select id="atisSide">
-                <option value="dep">Departure (_D_ATIS)</option>
-                <option value="arr">Arrival (_A_ATIS)</option>
-                <option value="plain">Combined (plain ICAO)</option>
-              </select>
-            </label>
-            <button type="button" class="accent" id="btnAtis">Request VATSIM ATIS</button>
+            <button type="button" class="accent" id="btnAtis">Request ATIS</button>
           </div>
         </section>
 
         <section id="view-telex" class="view">
           <div class="card">
             <h2>Send telex</h2>
-            <p class="hint">
-              Needs Companion station mode ON under Network on the desktop.
-              Leave that off if the aircraft already sends ACARS itself.
+            <p class="hint" id="telexHint">
+              Needs Connect or Companion station mode on the PC.
             </p>
             <label>
               To
@@ -108,9 +107,8 @@
         <section id="view-pdc" class="view">
           <div class="card">
             <h2>Pre-departure clearance</h2>
-            <p class="hint">
-              Standard Hoppie PDC telex to the ATC facility (usually the airport
-              ICAO), same format as Magknight / FBW:
+            <p class="hint" id="pdcHint">
+              Standard Hoppie PDC telex to the ATC facility (usually the airport ICAO).
             </p>
             <pre class="sample">REQUEST PREDEP CLEARANCE
 CALLSIGN TYPE TO DEST

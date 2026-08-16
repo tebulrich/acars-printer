@@ -608,16 +608,20 @@ export default function App() {
                 flash(`Deleted ${profileId}`);
               })
             }
-            onSaveFormat={() =>
+            onSaveFormat={(patch) =>
               void run(async () => {
-                const next = await saveFormat(settings);
+                const payload = { ...settings, ...patch };
+                setSettings(payload);
+                const next = await saveFormat(payload);
                 setSettings((prev) => (prev ? { ...prev, ...next } : next));
                 flash("Format saved");
               })
             }
-            onSaveAndTest={() =>
+            onSaveAndTest={(patch) =>
               void run(async () => {
-                const next = await saveFormat(settings);
+                const payload = { ...settings, ...patch };
+                setSettings(payload);
+                const next = await saveFormat(payload);
                 setSettings((prev) => (prev ? { ...prev, ...next } : next));
                 await testPrint();
                 flash("Test print sent");

@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import ctypes
 import logging
+import time
 from ctypes import (
     POINTER,
     Structure,
@@ -22,7 +23,7 @@ from ctypes import (
 )
 from pathlib import Path
 
-from acars_bridge.simconnect.monitor import SimSnapshot
+from acars_bridge.simconnect.monitor import SimSnapshot, resolve_in_session
 
 log = logging.getLogger(__name__)
 
@@ -43,7 +44,21 @@ SIMCONNECT_RECV_ID_NULL = 0
 SIMCONNECT_RECV_ID_EXCEPTION = 1
 SIMCONNECT_RECV_ID_OPEN = 2
 SIMCONNECT_RECV_ID_QUIT = 3
+SIMCONNECT_RECV_ID_EVENT = 4
+SIMCONNECT_RECV_ID_EVENT_FILENAME = 6
 SIMCONNECT_RECV_ID_SIMOBJECT_DATA = 8
+SIMCONNECT_RECV_ID_SYSTEM_STATE = 15
+
+# Client event / request ids (not the recv enum).
+EVENT_SIM_START = 1
+EVENT_SIM_STOP = 2
+EVENT_FLIGHT_LOADED = 3
+REQUEST_TELEMETRY = 1
+REQUEST_SIM_STATE = 2
+REQUEST_FLIGHT_LOADED = 3
+
+MAX_PATH = 260
+OPEN_APP_NAME_LEN = 256
 
 _EXCEPTION_NAMES = {
     1: "ERROR",
@@ -102,6 +117,63 @@ class SIMCONNECT_RECV_EXCEPTION(Structure):
     ]
 
 
+class SIMCONNECT_RECV_EVENT(Structure):
+    _pack_ = 1
+    _fields_ = [
+        ("dwSize", c_uint32),
+        ("dwVersion", c_uint32),
+        ("dwID", c_uint32),
+        ("uGroupID", c_uint32),
+        ("uEventID", c_uint32),
+        ("dwData", c_uint32),
+    ]
+
+
+class SIMCONNECT_RECV_EVENT_FILENAME(Structure):
+    _pack_ = 1
+    _fields_ = [
+        ("dwSize", c_uint32),
+        ("dwVersion", c_uint32),
+        ("dwID", c_uint32),
+        ("uGroupID", c_uint32),
+        ("uEventID", c_uint32),
+        ("dwData", c_uint32),
+        ("szFileName", ctypes.c_char * MAX_PATH),
+        ("dwFlags", c_uint32),
+    ]
+
+
+class SIMCONNECT_RECV_SYSTEM_STATE(Structure):
+    _pack_ = 1
+    _fields_ = [
+        ("dwSize", c_uint32),
+        ("dwVersion", c_uint32),
+        ("dwID", c_uint32),
+        ("dwRequestID", c_uint32),
+        ("dwInteger", c_uint32),
+        ("fFloat", c_float),
+        ("szString", ctypes.c_char * MAX_PATH),
+    ]
+
+
+class SIMCONNECT_RECV_OPEN(Structure):
+    _pack_ = 1
+    _fields_ = [
+        ("dwSize", c_uint32),
+        ("dwVersion", c_uint32),
+        ("dwID", c_uint32),
+        ("szApplicationName", ctypes.c_char * OPEN_APP_NAME_LEN),
+        ("dwApplicationVersionMajor", c_uint32),
+        ("dwApplicationVersionMinor", c_uint32),
+        ("dwApplicationBuildMajor", c_uint32),
+        ("dwApplicationBuildMinor", c_uint32),
+        ("dwSimConnectVersionMajor", c_uint32),
+        ("dwSimConnectVersionMinor", c_uint32),
+        ("dwSimConnectBuildMajor", c_uint32),
+        ("dwSimConnectBuildMinor", c_uint32),
+    ]
+
+
 class TelemetryData(Structure):
     _fields_ = [
         ("on_ground", ctypes.c_double),
@@ -120,6 +192,7 @@ class TelemetryData(Structure):
         ("exit_open_1", ctypes.c_double),
         ("interactive_open_0", ctypes.c_double),
         ("interactive_open_1", ctypes.c_double),
+        ("camera_state", ctypes.c_double),
         # --- electrical buses / sources (logged in full every sample) ---
         ("bus_main", ctypes.c_double),
         ("bus_avionics", ctypes.c_double),
@@ -216,6 +289,7 @@ def electrical_sample(t: TelemetryData) -> dict[str, float]:
         "ELECTRICAL MASTER BATTERY": round(float(t.battery_master), 3),
         "ELECTRICAL MASTER BATTERY:1": round(float(t.battery_master_1), 3),
         "ELECTRICAL MASTER BATTERY:2": round(float(t.battery_master_2), 3),
+        "CAMERA STATE": round(float(t.camera_state), 3),
     }
     for field, simvar, _units in ELECTRICAL_SIMVARS:
         out[simvar] = round(float(getattr(t, field)), 3)
@@ -225,6 +299,17 @@ def electrical_sample(t: TelemetryData) -> dict[str, float]:
 def _c_str(value: str) -> bytes:
     """SimConnect APIs take const char* (ANSI), not wchar_t*."""
     return value.encode("ascii")
+
+
+def _decode_c_string(raw: bytes | str) -> str:
+    if isinstance(raw, str):
+        return raw.split("\x00", 1)[0].strip()
+    return raw.split(b"\x00", 1)[0].decode("ascii", errors="replace").strip()
+
+
+def application_is_msfs_2024(name: str, version_major: int) -> bool:
+    lowered = name.lower()
+    return version_major >= 12 or "2024" in lowered or "sunrise" in lowered
 
 
 class SimConnectSession:
@@ -237,6 +322,10 @@ class SimConnectSession:
         self._last = TelemetryData()
         self._have_data = False
         self.last_end_reason = ""
+        self._sim_running: bool | None = None
+        self._flight_path = ""
+        self._msfs_2024 = False
+        self._last_sys_req = 0.0
         self._bind()
 
     def _bind(self) -> None:
@@ -285,6 +374,20 @@ class SimConnectSession:
         ]
         self._dll.SimConnect_GetNextDispatch.restype = c_long
 
+        self._dll.SimConnect_SubscribeToSystemEvent.argtypes = [
+            c_void_p,
+            c_uint32,
+            c_char_p,
+        ]
+        self._dll.SimConnect_SubscribeToSystemEvent.restype = c_long
+
+        self._dll.SimConnect_RequestSystemState.argtypes = [
+            c_void_p,
+            c_uint32,
+            c_char_p,
+        ]
+        self._dll.SimConnect_RequestSystemState.restype = c_long
+
     def __enter__(self) -> SimConnectSession:
         hr = self._dll.SimConnect_Open(
             byref(self._hsim), _c_str("ACARS Print Bridge"), None, 0, None, 0
@@ -311,6 +414,7 @@ class SimConnectSession:
             ("EXIT OPEN:1", "Percent Over 100"),
             ("INTERACTIVE POINT OPEN:0", "Percent Over 100"),
             ("INTERACTIVE POINT OPEN:1", "Percent Over 100"),
+            ("CAMERA STATE", "Enum"),
         ]
         defs.extend((name, units) for _field, name, units in ELECTRICAL_SIMVARS)
         for name, units in defs:
@@ -340,9 +444,40 @@ class SimConnectSession:
         if hr != S_OK:
             raise RuntimeError("RequestDataOnSimObject failed")
 
+        for event_id, name in (
+            (EVENT_SIM_START, "SimStart"),
+            (EVENT_SIM_STOP, "SimStop"),
+            (EVENT_FLIGHT_LOADED, "FlightLoaded"),
+        ):
+            hr = self._dll.SimConnect_SubscribeToSystemEvent(
+                self._hsim, event_id, _c_str(name)
+            )
+            if hr != S_OK:
+                log.warning("SubscribeToSystemEvent(%s) failed HRESULT=0x%08X", name, hr & 0xFFFFFFFF)
+
         self._open = True
         self._quit = False
+        self._request_system_states()
         return self
+
+    def _request_system_states(self) -> None:
+        if not self._hsim:
+            return
+        self._dll.SimConnect_RequestSystemState(
+            self._hsim, REQUEST_SIM_STATE, _c_str("Sim")
+        )
+        self._dll.SimConnect_RequestSystemState(
+            self._hsim, REQUEST_FLIGHT_LOADED, _c_str("FlightLoaded")
+        )
+        self._last_sys_req = time.monotonic()
+
+    def _in_session(self, camera_state: float | None = None) -> bool | None:
+        return resolve_in_session(
+            sim_running=self._sim_running,
+            flight_path=self._flight_path,
+            camera_state=camera_state,
+            msfs_2024=self._msfs_2024,
+        )
 
     def __exit__(self, *exc: object) -> None:
         if self._hsim:
@@ -356,6 +491,9 @@ class SimConnectSession:
     def poll(self) -> SimSnapshot | None:
         if not self._open or self._quit:
             return None
+
+        if time.monotonic() - self._last_sys_req >= 2.0:
+            self._request_system_states()
 
         # Pump a few dispatches each poll.
         for _ in range(32):
@@ -389,7 +527,40 @@ class SimConnectSession:
                 )
                 continue
             if recv.dwID == SIMCONNECT_RECV_ID_OPEN:
-                log.info("SimConnect OPEN received (protocol handshake OK)")
+                opened = ctypes.cast(p_data, POINTER(SIMCONNECT_RECV_OPEN)).contents
+                app = _decode_c_string(bytes(opened.szApplicationName))
+                major = int(opened.dwApplicationVersionMajor)
+                self._msfs_2024 = application_is_msfs_2024(app, major)
+                log.info(
+                    "SimConnect OPEN received (protocol handshake OK) app=%s v%s 2024=%s",
+                    app,
+                    major,
+                    self._msfs_2024,
+                )
+                continue
+            if recv.dwID == SIMCONNECT_RECV_ID_EVENT:
+                event = ctypes.cast(p_data, POINTER(SIMCONNECT_RECV_EVENT)).contents
+                if event.uEventID == EVENT_SIM_START:
+                    self._sim_running = True
+                    log.info("SimConnect SimStart — user is in a flight")
+                elif event.uEventID == EVENT_SIM_STOP:
+                    self._sim_running = False
+                    log.info("SimConnect SimStop — user left the flight / in UI")
+                continue
+            if recv.dwID == SIMCONNECT_RECV_ID_EVENT_FILENAME:
+                loaded = ctypes.cast(
+                    p_data, POINTER(SIMCONNECT_RECV_EVENT_FILENAME)
+                ).contents
+                if loaded.uEventID == EVENT_FLIGHT_LOADED:
+                    self._flight_path = _decode_c_string(bytes(loaded.szFileName))
+                    log.info("SimConnect FlightLoaded %s", self._flight_path)
+                continue
+            if recv.dwID == SIMCONNECT_RECV_ID_SYSTEM_STATE:
+                state = ctypes.cast(p_data, POINTER(SIMCONNECT_RECV_SYSTEM_STATE)).contents
+                if state.dwRequestID == REQUEST_SIM_STATE:
+                    self._sim_running = bool(state.dwInteger)
+                elif state.dwRequestID == REQUEST_FLIGHT_LOADED:
+                    self._flight_path = _decode_c_string(bytes(state.szString))
                 continue
             if recv.dwID == SIMCONNECT_RECV_ID_SIMOBJECT_DATA:
                 try:
@@ -400,8 +571,12 @@ class SimConnectSession:
                     continue
 
         if not self._have_data:
-            # Connected but waiting for first packet.
-            return SimSnapshot(connected=True)
+            # Connected but waiting for first packet — still publish session.
+            return SimSnapshot(
+                connected=True,
+                source="simconnect",
+                in_session=self._in_session(),
+            )
 
         t = self._last
         battery_on = (
@@ -445,6 +620,7 @@ class SimConnectSession:
             main_bus_voltage=main_bus_voltage,
             main_door_open=door_open,
             electrical=electrical_sample(t),
+            in_session=self._in_session(float(t.camera_state)),
         )
 
 

@@ -63,21 +63,9 @@ def fetch_vatsim_atis(
     if not matches:
         return None
 
-    code = normalize_icao(icao)
-    preferred = _preferred_callsigns(code, side, online={m.callsign for m in matches})
-    by_cs = {m.callsign: m for m in matches}
-    for name in preferred:
-        hit = by_cs.get(name)
-        if hit is not None and hit.has_text:
-            return hit
-    for name in preferred:
-        hit = by_cs.get(name)
-        if hit is not None:
-            return hit
-    for hit in matches:
-        if hit.has_text:
-            return hit
-    return matches[0]
+    from acars_bridge.hoppie.atis_pick import pick_network_atis
+
+    return pick_network_atis(matches, icao=normalize_icao(icao), side=side)
 
 
 def hoppie_vatatis_packets(
@@ -88,65 +76,30 @@ def hoppie_vatatis_packets(
 ) -> list[str]:
     """Hoppie ``vatatis`` packets to try, ordered for real VATSIM stations.
 
-    Hoppie matches the live ATC callsign. Many airports (EDDN, EDDS, …) publish
-    combined ``ICAO_ATIS``; Hoppie then answers ``vatatis ICAO`` and rejects
-    ``ICAO_D_ATIS`` / ``ICAO_ATIS`` with ``THIS ATIS IS NOT AVAILABLE``.
-
-    Split D/A stations are only requested when that callsign is actually online.
+    Combined ``ICAO_ATIS`` always wins. Otherwise dep/arr when that split
+    station is online. Plain ``vatatis ICAO`` is the fallback (Hoppie's
+    combined resolver — verified EDDN/EDDS).
     """
+    from acars_bridge.hoppie.atis_pick import is_combined_callsign, split_callsign
+
     code = normalize_icao(icao)
     online = {cs.upper() for cs in (online_callsigns or set())}
     packets: list[str] = []
-
+    if any(is_combined_callsign(cs, code) for cs in online):
+        packets.append(f"{AtisSource.VATSIM.value} {code}")
+        packets.append(f"{AtisSource.VATSIM.value} {code}_ATIS")
+        return _unique(packets)
     if side is not None:
-        side_value = AtisSide(str(side).strip().lower())
-        letter = "A" if side_value is AtisSide.ARR else "D"
-        specific = f"{code}_{letter}_ATIS"
+        specific = split_callsign(code, side)
         if specific in online:
             packets.append(f"{AtisSource.VATSIM.value} {specific}")
-
-    # Plain ICAO is what Hoppie resolves for combined ATIS (verified EDDN/EDDS).
+    else:
+        for letter in ("D", "A"):
+            cs = f"{code}_{letter}_ATIS"
+            if cs in online:
+                packets.append(f"{AtisSource.VATSIM.value} {cs}")
     packets.append(f"{AtisSource.VATSIM.value} {code}")
-
-    # Last resort: explicit combined callsign / opposite side if online.
-    if f"{code}_ATIS" in online:
-        packets.append(f"{AtisSource.VATSIM.value} {code}_ATIS")
-    if side is not None:
-        side_value = AtisSide(str(side).strip().lower())
-        other = "D" if side_value is AtisSide.ARR else "A"
-        other_cs = f"{code}_{other}_ATIS"
-        if other_cs in online:
-            packets.append(f"{AtisSource.VATSIM.value} {other_cs}")
-
     return _unique(packets)
-
-
-def _preferred_callsigns(
-    icao: str,
-    side: AtisSide | str | None,
-    *,
-    online: set[str],
-) -> list[str]:
-    names: list[str] = []
-    if side is not None:
-        side_value = AtisSide(str(side).strip().lower())
-        letter = "A" if side_value is AtisSide.ARR else "D"
-        specific = f"{icao}_{letter}_ATIS"
-        if specific in online:
-            names.append(specific)
-    if f"{icao}_ATIS" in online:
-        names.append(f"{icao}_ATIS")
-    if side is not None:
-        side_value = AtisSide(str(side).strip().lower())
-        other = "D" if side_value is AtisSide.ARR else "A"
-        other_cs = f"{icao}_{other}_ATIS"
-        if other_cs in online:
-            names.append(other_cs)
-    # Keep any other online callsigns (rare variants) at the end.
-    for cs in sorted(online):
-        if cs not in names:
-            names.append(cs)
-    return names
 
 
 def _from_row(row: dict) -> VatsimAtis | None:

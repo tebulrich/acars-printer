@@ -346,5 +346,21 @@ def test_companion_status_prefills_simbrief_airports(tmp_path):
         assert status["origin_icao"] == "EDDF"
         assert status["dest_icao"] == "KJFK"
         assert status["wx_icao"] == "KJFK"
+        assert status["can_wx"] is True
+        assert status["can_send"] is False
+        assert status["atis_source"] == "vatatis"
     finally:
         runtime.shutdown()
+
+
+def test_companion_error_payload_is_short_with_hint():
+    from acars_bridge.companion.api import error_payload
+    from acars_bridge.hoppie.errors import SendNotAllowedError
+
+    code, payload = error_payload(
+        SendNotAllowedError("Can't send from the phone yet.", hint="Turn on station mode.")
+    )
+    assert code == 403
+    assert payload["error"] == "Can't send from the phone yet."
+    assert payload["hint"] == "Turn on station mode."
+    assert "fenix" not in payload["error"].lower()

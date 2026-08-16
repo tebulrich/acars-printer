@@ -7,7 +7,8 @@ from typing import TYPE_CHECKING
 
 import httpx
 
-from acars_bridge.hoppie.requests import AtisSide, normalize_icao
+from acars_bridge.hoppie.ivao_atis import fetch_ivao_atis
+from acars_bridge.hoppie.requests import AtisSide, AtisSource, normalize_icao
 from acars_bridge.hoppie.vatsim_atis import fetch_vatsim_atis
 from acars_bridge.models.messages import StoredMessage
 from acars_bridge.printing.base import PrinterSettings
@@ -26,6 +27,7 @@ log = logging.getLogger(__name__)
 
 _INFOREQ_PREFIX = {
     "auto_atis": "VATATIS {icao}_A",
+    "auto_atis_ivao": "IVAOATIS {icao}",
     "auto_metar": "METAR {icao}",
     "auto_taf": "TAF {icao}",
 }
@@ -150,13 +152,20 @@ class AutoWxService:
     def _fetch_bodies(self, dest: str, kinds: set[str]) -> list[tuple[str, str]]:
         out: list[tuple[str, str]] = []
         if "atis" in kinds:
+            source = self.settings.atis_source()
             try:
-                atis = fetch_vatsim_atis(dest, side=AtisSide.ARR, client=self._http)
+                if source is AtisSource.IVAO:
+                    atis = fetch_ivao_atis(dest, side=AtisSide.ARR, client=self._http)
+                    kind = "auto_atis_ivao"
+                else:
+                    atis = fetch_vatsim_atis(dest, side=AtisSide.ARR, client=self._http)
+                    kind = "auto_atis"
             except Exception:
-                log.exception("VATSIM ATIS fetch failed dest=%s", dest)
+                log.exception("%s ATIS fetch failed dest=%s", source.value, dest)
                 atis = None
+                kind = "auto_atis"
             if atis is not None:
-                out.append(("auto_atis", atis.body()))
+                out.append((kind, atis.body()))
         if "metar" in kinds:
             metar = fetch_metar_raw(dest, client=self._http)
             if metar:
@@ -216,7 +225,9 @@ def _as_inforeq_payload(ticket_type: str, icao: str, body: str) -> str:
     if not template:
         return text
     first = text.split("\n", 1)[0].strip().upper()
-    if first.startswith(("VATATIS", "METAR", "TAF", "SHORTTAF", "SHORTFAF", "ATIS")):
+    if first.startswith(
+        ("VATATIS", "IVAOATIS", "METAR", "TAF", "SHORTTAF", "SHORTFAF", "ATIS")
+    ):
         return text
     return f"{template.format(icao=icao)}\n{text}"
 

@@ -100,7 +100,72 @@ def parse_tcp_printer(destination: str) -> tuple[str, int] | None:
     return host, port
 
 
+def unc_share_name(raw: str) -> str | None:
+    """Return ``\\\\host\\share`` for a Windows UNC printer path, else None."""
+    text = (raw or "").strip()
+    if text.lower().startswith("win32://"):
+        text = text[8:]
+    unified = text.replace("/", "\\")
+    if not unified.startswith("\\\\"):
+        return None
+    parts = [part for part in unified.split("\\") if part]
+    if len(parts) < 2:
+        return None
+    return "\\\\" + "\\".join(parts)
+
+
+def windows_share_path(destination: str) -> str | None:
+    """Display form of a UNC destination (``\\\\host\\queue``), else None."""
+    return unc_share_name(destination)
+
+
+def normalize_printer_destination(raw: str) -> str:
+    """Accept list URIs, raw ``tcp://``, or a typed ``\\\\host\\queue`` share."""
+    text = (raw or "").strip()
+    if not text or text.lower() in {"console", "console (log only)"}:
+        return "console"
+    share = unc_share_name(text)
+    if share:
+        return f"win32://{share}"
+    if text.lower().startswith("win32://"):
+        name = text[8:].strip()
+        return f"win32://{name}" if name else "console"
+    return text
+
+
+def infer_printer_input_mode(destination: str) -> str:
+    """``list``, ``ip`` (raw tcp://), or ``path`` (Windows UNC share)."""
+    dest = normalize_printer_destination(destination or "")
+    if parse_tcp_printer(dest):
+        return "ip"
+    if windows_share_path(dest):
+        return "path"
+    return "list"
+
+
+def destination_from_manual_draft(draft: str, port: object = None) -> str:
+    """Parse a typed share or host[:port] into a stored destination."""
+    typed = (draft or "").strip()
+    if not typed:
+        return "console"
+    share = unc_share_name(typed)
+    if share:
+        return f"win32://{share}"
+    if typed.lower().startswith("tcp://"):
+        return typed
+    if "://" not in typed and not typed.startswith("\\") and "/" not in typed:
+        if ":" in typed:
+            host, _, port_text = typed.rpartition(":")
+            if host.strip() and port_text.isdigit():
+                return tcp_printer_destination(host, port_text)
+        return tcp_printer_destination(typed, port)
+    return normalize_printer_destination(typed)
+
+
 def destination_for_system_printer(name: str) -> str:
+    share = unc_share_name(name)
+    if share:
+        return f"win32://{share}"
     if sys.platform.startswith("win"):
         return f"win32://{name}"
     return f"cups://{name}"
@@ -140,14 +205,14 @@ def list_printer_choices(current: str | None = None) -> list[PrinterChoice]:
 
     if sys.platform.startswith("win"):
         for name in list_win32_printer_names():
-            choices.append(PrinterChoice(name, f"win32://{name}"))
+            choices.append(PrinterChoice(name, destination_for_system_printer(name)))
     else:
         for name in list_cups_printer_names():
             choices.append(PrinterChoice(cups_driver_label(name), f"cups://{name}"))
             choices.append(PrinterChoice(cups_pos_label(name), f"cups-raw://{name}"))
 
-    current = (current or "").strip()
-    if current and current not in {c.destination for c in choices}:
+    current = normalize_printer_destination(current or "")
+    if current and current != "console" and current not in {c.destination for c in choices}:
         choices.append(PrinterChoice(label_for_destination(current), current))
 
     return choices
@@ -160,15 +225,19 @@ def destination_from_label(label: str, choices: list[PrinterChoice]) -> str:
             return choice.destination
     if not label or label in {"console", "console (log only)"}:
         return "console"
+    share = unc_share_name(label)
+    if share:
+        return f"win32://{share}"
     # Typed/custom URI pasted into an older UI, or unknown name.
     if "://" in label:
-        return label
+        return normalize_printer_destination(label)
     # Bare queue name → driver text (safe default for MFPs).
     return destination_for_system_printer(label)
 
 
 def is_device_printer_destination(destination: str) -> bool:
-    return destination.startswith(
+    dest = normalize_printer_destination(destination)
+    return dest.startswith(
         ("tcp://", "file://", "win32://", "cups://", "cups-raw://")
     )
 

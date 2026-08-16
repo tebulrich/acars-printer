@@ -219,6 +219,7 @@ class BridgeRuntime:
                 {"id": p.id.value, "label": p.label} for p in all_profiles()
             ],
             "printer_destination": s.printer_destination(),
+            "printer_input_mode": s.printer_input_mode(),
             "paper_width": s.paper_width(),
             "cut_enabled": s.cut_enabled(),
             "print_render_mode": s.print_render_mode(),
@@ -243,6 +244,7 @@ class BridgeRuntime:
             "wx_auto_nm": s.wx_auto_nm(),
             "wx_auto_kinds": sorted(s.wx_auto_kinds()),
             "wx_auto_kind_choices": list(SettingsStore.WX_AUTO_KIND_CHOICES),
+            "atis_source": s.atis_source().value,
             "hotkeys_enabled": s.hotkeys_enabled(),
             "hotkey_bindings": s.hotkey_bindings(),
             "hotkey_actions": list(SettingsStore.HOTKEY_ACTIONS),
@@ -316,6 +318,8 @@ class BridgeRuntime:
             s.set_wx_auto_nm(args["wx_auto_nm"])
         if "wx_auto_kinds" in args:
             s.set_wx_auto_kinds(args["wx_auto_kinds"] or [])
+        if "atis_source" in args:
+            s.set_atis_source(args["atis_source"])
         if "hotkeys_enabled" in args:
             s.set_hotkeys_enabled(bool(args["hotkeys_enabled"]))
         if "hotkey_bindings" in args and isinstance(args["hotkey_bindings"], dict):
@@ -362,6 +366,8 @@ class BridgeRuntime:
         s = self.session.settings
         if "printer_destination" in args:
             s.set_printer_destination(str(args.get("printer_destination") or ""))
+        if "printer_input_mode" in args:
+            s.set_printer_input_mode(args.get("printer_input_mode"))
         if "paper_width" in args:
             s.set_paper_width(str(args["paper_width"]))
         if "cut_enabled" in args:
@@ -533,6 +539,19 @@ class BridgeRuntime:
                 ),
             }
         source = getattr(snap, "source", "")
+        if (
+            powered is None
+            and source == "simconnect"
+            and getattr(snap, "in_session", None) is not True
+        ):
+            return {
+                "id": "pwr",
+                "text": "PWR —" if not queued else f"PWR — · q{queued}",
+                "tip": (
+                    "MSFS is open, but you are not in a flight yet. "
+                    "Menu / world hub electrical readings are ignored."
+                ),
+            }
         if powered is True:
             label = "PWR on" if not queued else f"PWR on · q{queued}"
             tip = (

@@ -35,6 +35,11 @@ def test_apply_pos58_readable_sets_paper_and_format(app_session) -> None:
     assert s.active_print_profile() == "pos58_readable"
     # Destination unchanged by builtins
     assert s.printer_destination() == "fake"
+    assert s.printer_input_mode() == "list"
+    s.set_printer_input_mode("path")
+    assert s.printer_input_mode() == "path"
+    s.set_printer_input_mode("ip")
+    assert s.printer_input_mode() == "ip"
 
 
 def test_save_user_profile_roundtrip_and_apply(app_session) -> None:
