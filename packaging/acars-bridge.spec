@@ -159,6 +159,8 @@ a = Analysis(
         "pywintypes",
         "escpos",
         "escpos.printer",
+        "segno",
+        "PIL",
     ],
     hookspath=[],
     hooksconfig={},

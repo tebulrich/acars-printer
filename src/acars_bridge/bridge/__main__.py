@@ -34,6 +34,23 @@ def _emit(payload: dict) -> None:
             pass
 
 
+def emit_handle_result(
+    result: dict,
+    events: list[dict],
+    *,
+    emit=_emit,
+) -> None:
+    """Write pending events, then the RPC response.
+
+    The desktop shell reads stdout until the first non-event line and returns.
+    Events flushed *after* that response sit unread until the next RPC, so the
+    Messages list can stay empty until the user clicks Refresh.
+    """
+    for event in events:
+        emit(event)
+    emit(result)
+
+
 def isolate_protocol_stdout() -> TextIO:
     """Send casual ``print()`` noise to stderr so NDJSON on stdout stays clean.
 
@@ -121,9 +138,8 @@ def serve() -> int:
             except Exception as exc:  # noqa: BLE001
                 _emit(_err(f"Invalid request: {exc}"))
                 continue
-            _emit(runtime.handle(command, args))
-            for event in runtime.drain_events():
-                _emit(event)
+            result = runtime.handle(command, args)
+            emit_handle_result(result, runtime.drain_events())
             if command == "quit":
                 break
     finally:

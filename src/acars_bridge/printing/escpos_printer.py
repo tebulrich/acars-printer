@@ -127,6 +127,7 @@ class EscPosMessagePrinter:
             self._render_bitmap(printer, body, settings)
         else:
             printer.text(body)  # type: ignore[attr-defined]
+            self._render_pairing_qr_native(printer, settings)
         if settings.cut_enabled:
             self._tear_or_cut(printer, settings)
 
@@ -141,6 +142,10 @@ class EscPosMessagePrinter:
             line_gap_px=settings.line_gap_px,
             bold=settings.bold,
         )
+        if settings.pairing_url:
+            from acars_bridge.printing.companion_qr import stack_pairing_qr
+
+            img = stack_pairing_qr(img, settings.pairing_url, settings.paper_width)
         # python-escpos prints a stdout warning when media.width.pixels is
         # "Unknown" (even with center=False). That breaks the Tauri NDJSON bridge.
         EscPosMessagePrinter._ensure_media_width_pixels(printer, settings.paper_width)
@@ -158,6 +163,33 @@ class EscPosMessagePrinter:
                     printer.image(str(path), center=False)  # type: ignore[attr-defined]
                 except TypeError:
                     printer.image(str(path))  # type: ignore[attr-defined]
+
+    @staticmethod
+    def _render_pairing_qr_native(printer: object, settings: PrinterSettings) -> None:
+        url = (settings.pairing_url or "").strip()
+        if not url:
+            return
+        try:
+            printer.qr(url, native=True, center=True)  # type: ignore[attr-defined]
+            return
+        except Exception:
+            pass
+        from acars_bridge.printing.companion_qr import stack_pairing_qr
+        from acars_bridge.printing.bitmap_render import render_receipt_bitmap
+
+        blank = render_receipt_bitmap(
+            "\n",
+            paper_width=settings.paper_width,
+            glyph_px=settings.glyph_px,
+            line_gap_px=0,
+            bold=False,
+        )
+        img = stack_pairing_qr(blank, url, settings.paper_width)
+        EscPosMessagePrinter._ensure_media_width_pixels(printer, settings.paper_width)
+        try:
+            printer.image(img, center=False)  # type: ignore[attr-defined]
+        except TypeError:
+            printer.image(img)  # type: ignore[attr-defined]
 
     @staticmethod
     def _ensure_media_width_pixels(printer: object, paper_width: str) -> None:

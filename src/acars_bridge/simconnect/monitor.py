@@ -24,6 +24,8 @@ class SimSnapshot:
     zulu_month: int | None = None
     zulu_day: int | None = None
     zulu_seconds: float | None = None
+    # "simconnect" | "xplane" when a backend produced this sample.
+    source: str = ""
     # True/False when known from SimConnect; None when disconnected / not yet sampled.
     battery_on: bool | None = None
     # EXTERNAL POWER ON — GPU plugged in alone does not set this.
@@ -62,6 +64,8 @@ def aircraft_is_powered(snapshot: SimSnapshot | None) -> bool | None:
     """
     if snapshot is None or not snapshot.connected:
         return None
+    if snapshot.source == "xplane":
+        return _xplane_is_powered(snapshot)
 
     elec = snapshot.electrical or {}
 
@@ -192,12 +196,62 @@ def aircraft_is_powered(snapshot: SimSnapshot | None) -> bool | None:
     return None
 
 
+def _xplane_is_powered(snapshot: SimSnapshot) -> bool | None:
+    """X-Plane power from real sources, not Laminar bus volts.
+
+    On = engine running / N1, APU running / AVAIL / gen, or GPU relay.
+    Off = those sources were sampled and all are dark (737 / A330 cold).
+    Unknown = no source sample yet. Bus volts are ignored either way.
+    """
+    from acars_bridge.xplane.protocol import electrical_sources_live
+
+    if snapshot.external_power_on is True or snapshot.apu_generator_on is True:
+        return True
+    return electrical_sources_live(snapshot.electrical)
+
+
 class SimConnectMonitor(Protocol):
     def start(self) -> None: ...
 
     def stop(self) -> None: ...
 
     def snapshot(self) -> SimSnapshot | None: ...
+
+
+class CompositeSimMonitor:
+    """Prefer MSFS SimConnect; fall back to X-Plane UDP (kinematics + generators)."""
+
+    def __init__(
+        self,
+        primary: SimConnectMonitor,
+        fallback: SimConnectMonitor,
+    ) -> None:
+        self._primary = primary
+        self._fallback = fallback
+
+    def start(self) -> None:
+        self._primary.start()
+        self._fallback.start()
+
+    def stop(self) -> None:
+        self._fallback.stop()
+        self._primary.stop()
+
+    def snapshot(self) -> SimSnapshot | None:
+        primary = self._primary.snapshot()
+        if primary is not None and primary.connected:
+            return primary
+        fallback = self._fallback.snapshot()
+        if fallback is not None and fallback.connected:
+            return fallback
+        if fallback is not None and fallback.detail:
+            return fallback
+        return primary
+
+    def set_xplane_endpoint(self, host: str, port: int | str) -> None:
+        setter = getattr(self._fallback, "set_endpoint", None)
+        if callable(setter):
+            setter(host, port)
 
 
 class NullSimConnectMonitor:
@@ -310,6 +364,7 @@ class WindowsSimConnectMonitor:
                     self._set(
                         SimSnapshot(
                             connected=True,
+                            source=snap.source or "simconnect",
                             on_ground=snap.on_ground,
                             ground_velocity_kt=snap.ground_velocity_kt,
                             alt_agl_ft=snap.alt_agl_ft,
@@ -333,7 +388,20 @@ class WindowsSimConnectMonitor:
                 time.sleep(0.5)
 
 
-def create_simconnect_monitor() -> SimConnectMonitor:
+def create_simconnect_monitor(settings: object | None = None) -> SimConnectMonitor:
     if sys.platform != "win32":
         return NullSimConnectMonitor()
-    return WindowsSimConnectMonitor()
+    from acars_bridge.xplane.monitor import XPlaneUdpMonitor
+
+    host = "127.0.0.1"
+    port: int | str = 49000
+    getter_h = getattr(settings, "xplane_host", None)
+    getter_p = getattr(settings, "xplane_port", None)
+    if callable(getter_h):
+        host = str(getter_h())
+    if callable(getter_p):
+        port = getter_p()
+    return CompositeSimMonitor(
+        WindowsSimConnectMonitor(),
+        XPlaneUdpMonitor(host=host, port=port),
+    )

@@ -13,15 +13,14 @@ class ThermalMessageFormatter:
 
     Layout:
 
-        ACARS START
-        ================================
+        ACARS BEGIN
         D-AILA ----  DLH4MC 04AUG 1809Z
-        --------------------------------
         <body>
-        ================================
+
         ACARS END
 
-    Registration is optional (Settings). If empty, omit both the tail and ``----``.
+    Registration is always first on the header line. If empty, the line still
+    starts with ``----`` then the callsign and stamp.
     """
 
     def format(
@@ -35,20 +34,16 @@ class ThermalMessageFormatter:
         title, body = self._title_and_body(message)
         reg = (settings.aircraft_registration or "").strip().upper() or None
         callsign = (message.callsign or "").strip().upper() or None
-        bar = "=" * max(8, width)
-        dash = "-" * max(8, width)
 
         lines: list[str] = [
-            "ACARS START",
-            bar,
+            "ACARS BEGIN",
             self._header_line(when, reg, callsign, width),
-            dash,
         ]
         if title:
             lines.extend(self._wrap_lines(title.upper(), width))
         for body_line in body.split("\n"):
             lines.extend(self._wrap_lines(body_line.upper(), width))
-        lines.append(bar)
+        lines.append("")
         lines.append("ACARS END")
         lines.append("")
         return "\n".join(lines)
@@ -56,7 +51,7 @@ class ThermalMessageFormatter:
     def test_page(self, settings: PrinterSettings, now: datetime | None = None) -> str:
         """Demo strip matching a real airline PDC hardcopy (for format comparison).
 
-        Uses the configured aircraft registration as-is (empty = omit tail / ``----``).
+        Uses the configured aircraft registration as-is (empty still prints ``----``).
         """
         # Fixed stamp from the reference photo so side-by-side comparison is easy.
         when = now or datetime(2026, 8, 4, 18, 9, tzinfo=UTC)
@@ -99,19 +94,11 @@ class ThermalMessageFormatter:
         callsign: str | None,
         width: int,
     ) -> str:
-        """``D-AILA ----  DLH4MC 04AUG 1809Z`` — omit tail/``----`` if no registration."""
+        """``D-AILA ----  DLH4MC 04AUG 1809Z`` — registration always first."""
         stamp = cls._stamp(when)
-        if registration and callsign:
-            line = f"{registration} ----  {callsign} {stamp}"
-        elif registration:
-            # No callsign: keep stamp near the right edge like short weather strips.
-            left = f"{registration} ----"
-            gap = max(1, width - len(left) - len(stamp))
-            line = left + (" " * gap) + stamp
-        elif callsign:
-            line = f"{callsign} {stamp}"
-        else:
-            line = stamp
+        left = f"{registration} ----" if registration else "----"
+        rest = f"{callsign} {stamp}".strip() if callsign else stamp
+        line = f"{left}  {rest}"
         if len(line) <= width:
             return line
         return line[:width]

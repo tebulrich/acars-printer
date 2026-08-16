@@ -30,6 +30,7 @@ class PrinterSettings:
     line_gap_px: int = 2
     lead_in_lines: int = 2
     tear_feed_lines: int = 6
+    pairing_url: str | None = None
 
     def characters_per_line(self) -> int:
         if self.character_width_override:

@@ -4,7 +4,28 @@ import io
 import json
 import sys
 
-from acars_bridge.bridge.__main__ import _emit, isolate_protocol_stdout
+from acars_bridge.bridge.__main__ import (
+    _emit,
+    emit_handle_result,
+    isolate_protocol_stdout,
+)
+
+
+def test_emit_handle_result_writes_events_before_response():
+    """Shell reads until the non-event response; events after it are deferred."""
+    out: list[dict] = []
+    events = [
+        {"ok": True, "event": "new_messages", "data": {"count": 3}},
+        {"ok": True, "event": "status", "data": {"message_count": 3}},
+    ]
+    emit_handle_result(
+        {"ok": True, "data": {"running": True}},
+        events,
+        emit=out.append,
+    )
+    assert [row.get("event") for row in out[:-1]] == ["new_messages", "status"]
+    assert out[-1] == {"ok": True, "data": {"running": True}}
+    assert "event" not in out[-1]
 
 
 def test_isolate_protocol_stdout_keeps_ndjson_clean():

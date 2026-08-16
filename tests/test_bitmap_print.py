@@ -54,7 +54,7 @@ def test_bitmap_columns_pack_tighter_than_ceil_measure():
 
 def test_render_receipt_bitmap_size():
     img = render_receipt_bitmap(
-        "ACARS START\nHELLO\nACARS END\n",
+        "ACARS BEGIN\nHELLO\nACARS END\n",
         paper_width="80",
         glyph_px=20,
         line_gap_px=2,
@@ -91,7 +91,7 @@ def test_escpos_bitmap_writes_raster(tmp_path):
         send_status=None,
         received_at="2026-08-04T18:09:00+00:00",
     )
-    EscPosMessagePrinter().print(msg, "ACARS START\nTEST LINE\nACARS END\n", settings)
+    EscPosMessagePrinter().print(msg, "ACARS BEGIN\nTEST LINE\nACARS END\n", settings)
     data = path.read_bytes()
     assert len(data) > 100
     # Raster / bit-image commands typically include GS v 0 (0x1d 0x76 0x30)
@@ -126,7 +126,7 @@ def test_escpos_bitmap_print_keeps_stdout_clean(tmp_path, capsys):
         send_status=None,
         received_at="2026-08-04T18:09:00+00:00",
     )
-    EscPosMessagePrinter().print(msg, "ACARS START\nTEST\nACARS END\n", settings)
+    EscPosMessagePrinter().print(msg, "ACARS BEGIN\nTEST\nACARS END\n", settings)
     captured = capsys.readouterr()
     assert "media.width.pixel" not in captured.out
     assert "center flag" not in captured.out

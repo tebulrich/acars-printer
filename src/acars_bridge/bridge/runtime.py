@@ -249,6 +249,8 @@ class BridgeRuntime:
             "sterile_agl_ft": s.sterile_agl_ft(),
             "sterile_agl_choices": list(s.sterile_agl_choices()),
             "print_when_powered": s.print_when_powered(),
+            "xplane_host": s.xplane_host(),
+            "xplane_port": s.xplane_port(),
             "simbrief_user": s.simbrief_user() or "",
             "simbrief_enabled": s.simbrief_enabled(),
             "simbrief_post_landing_grace_seconds": s.simbrief_post_landing_grace_seconds(),
@@ -259,16 +261,30 @@ class BridgeRuntime:
             "companion_port": s.companion_port(),
             "companion_token": "",
             "companion_url": "",
+            "companion_qr_png": "",
         }
-        if s.companion_enabled():
+        url = self._companion_url()
+        if url:
+            data["companion_url"] = url
             try:
-                from acars_bridge.companion.lan import primary_lan_ip
+                from acars_bridge.printing.companion_qr import pairing_png_base64
 
-                ip = primary_lan_ip()
-                data["companion_url"] = f"http://{ip}:{s.companion_port()}/"
+                data["companion_qr_png"] = pairing_png_base64(url)
             except Exception:
-                pass
+                data["companion_qr_png"] = ""
+        self.session.print_manager.set_pairing_url(url or None)
         return data
+
+    def _companion_url(self) -> str:
+        s = self.session.settings
+        if not s.companion_enabled():
+            return ""
+        try:
+            from acars_bridge.companion.lan import primary_lan_ip
+
+            return f"http://{primary_lan_ip()}:{s.companion_port()}/"
+        except Exception:
+            return ""
 
     def apply_settings(self, args: dict[str, Any]) -> dict[str, Any]:
         s = self.session.settings
@@ -308,6 +324,11 @@ class BridgeRuntime:
             s.set_sterile_agl_ft(args["sterile_agl_ft"])
         if "print_when_powered" in args:
             s.set_print_when_powered(bool(args["print_when_powered"]))
+        if "xplane_host" in args:
+            s.set_xplane_host(str(args.get("xplane_host") or ""))
+        if "xplane_port" in args:
+            s.set_xplane_port(args.get("xplane_port") or 49000)
+        self.session.apply_xplane_endpoint()
         if "simbrief_user" in args:
             s.set_simbrief_user(str(args.get("simbrief_user") or ""))
         if "simbrief_enabled" in args:
@@ -372,6 +393,23 @@ class BridgeRuntime:
 
     # --- status / messages --------------------------------------------------
 
+    @staticmethod
+    def _sim_disconnected_tip(snap: object | None, *, topic: str) -> str:
+        detail = ""
+        source = ""
+        if snap is not None:
+            detail = str(getattr(snap, "detail", "") or "").strip()
+            source = str(getattr(snap, "source", "") or "")
+        if source == "xplane":
+            return (
+                detail
+                or "No data from X-Plane yet. In X-Plane 12: Settings → Network → "
+                "turn on Accept incoming connections."
+            )
+        if topic == "power":
+            return detail or "Simulator is not connected, so aircraft power is unknown."
+        return detail or "Simulator is not connected (MSFS or X-Plane)."
+
     def _clock_chip(self) -> dict[str, str]:
         from acars_bridge.simbrief.watcher import default_clock
 
@@ -379,12 +417,27 @@ class BridgeRuntime:
         connected = bool(snap and getattr(snap, "connected", False))
         label = "SIM" if connected else "UTC"
         now = default_clock(snap)
-        return {"id": "clock", "text": f"{label} {now.strftime('%H:%MZ')}"}
+        tip = ""
+        if connected and snap is not None:
+            source = getattr(snap, "source", "")
+            if source == "xplane":
+                tip = "Clock is sim Zulu from X-Plane."
+            elif source == "simconnect":
+                tip = "Clock is sim Zulu from MSFS."
+        return {
+            "id": "clock",
+            "text": f"{label} {now.strftime('%H:%MZ')}",
+            "tip": tip,
+        }
 
     def _flt_chip(self) -> dict[str, str]:
         cs = self.session.settings.callsign() or ""
         text = f"FLT {cs}" if cs else "FLT ALL"
-        tip = f"Filter: {cs}" if cs else "Printing all flights seen"
+        tip = (
+            f"Only printing ACARS for {cs}."
+            if cs
+            else "No callsign filter — every flight the tap sees will print."
+        )
         return {"id": "flt", "text": text, "tip": tip}
 
     def _link_chip(self) -> dict[str, Any]:
@@ -415,25 +468,45 @@ class BridgeRuntime:
                 "tip": err,
             }
         if from_cs:
+            prefix = self._link_ok_prefix()
             return {
                 "id": "link",
-                "text": f"Hoppie ok · {from_cs}",
+                "text": f"{prefix} · {from_cs}",
                 "state": "ok",
-                "tip": tip or f"Aircraft session {from_cs}.",
+                "tip": tip or f"Printing ACARS for {from_cs}.",
             }
         if st.exchanges:
+            prefix = self._link_ok_prefix()
             return {
                 "id": "link",
-                "text": f"Hoppie ok · {st.exchanges} seen",
+                "text": f"{prefix} · {st.exchanges} seen",
                 "state": "ok",
-                "tip": tip or "Aircraft ACARS exchanges seen.",
+                "tip": tip or "ACARS messages from the aircraft have been seen.",
             }
         return {
             "id": "link",
-            "text": "Waiting for aircraft",
+            "text": f"{self._link_name()} wait",
             "state": "busy",
-            "tip": tip or "Connect is on. Use ACARS in the sim.",
+            "tip": (
+                "Listening for the first ACARS message from the aircraft. "
+                "Request weather or send a message in the sim — the callsign will appear here."
+            ),
         }
+
+    def _link_name(self) -> str:
+        nid = (
+            self.tap.status.network_id
+            or self.session.settings.acars_network().value
+            or ""
+        ).lower()
+        if nid == "sayintentions":
+            return "SI"
+        if nid == "pmdg_gfo":
+            return "GFO"
+        return "Hoppie"
+
+    def _link_ok_prefix(self) -> str:
+        return f"{self._link_name()} ok"
 
     def _power_chip(self) -> dict[str, str]:
         from acars_bridge.simconnect.monitor import SimSnapshot, aircraft_is_powered
@@ -446,7 +519,7 @@ class BridgeRuntime:
             return {
                 "id": "pwr",
                 "text": "PWR —",
-                "tip": "Aircraft power unknown — SimConnect not connected",
+                "tip": self._sim_disconnected_tip(snap, topic="power"),
             }
         powered = aircraft_is_powered(snap)
         if self.session.sterile.is_settling:
@@ -459,25 +532,48 @@ class BridgeRuntime:
                     f"(ACARS {acars_n}, SimBrief {sb_n})."
                 ),
             }
+        source = getattr(snap, "source", "")
         if powered is True:
             label = "PWR on" if not queued else f"PWR on · q{queued}"
-            tip = "Aircraft powered"
+            tip = (
+                "X-Plane: an engine, APU, or ground power is on."
+                if source == "xplane"
+                else "Aircraft is electrically powered."
+            )
             if self.session.sterile.require_powered:
-                tip += " — Only-when-powered: prints allowed."
+                tip += " Prints are allowed."
             return {"id": "pwr", "text": label, "tip": tip}
         if powered is False:
             label = "PWR off" if not queued else f"PWR off · q{queued}"
-            tip = "Aircraft unpowered"
+            tip = (
+                "X-Plane: no engine, APU, or ground power is on."
+                if source == "xplane"
+                else "Aircraft is unpowered."
+            )
             if self.session.sterile.require_powered:
                 tip += (
-                    f" — Only-when-powered: prints queued "
+                    f" Prints are queued until power comes on "
                     f"(ACARS {acars_n}, SimBrief {sb_n})."
                 )
             return {"id": "pwr", "text": label, "tip": tip}
+        if source == "xplane" and getattr(snap, "electrical", None) is not None:
+            return {
+                "id": "pwr",
+                "text": "PWR ?",
+                "tip": (
+                    "Power is unknown — no engine, APU, or ground-power sample yet. "
+                    "Prints are not held for power."
+                ),
+            }
         return {
             "id": "pwr",
-            "text": "PWR …",
-            "tip": "Waiting for first electrical sample from SimConnect.",
+            "text": "PWR —",
+            "tip": (
+                "X-Plane position is live, but this aircraft is not publishing "
+                "default electrical data. Prints are not held for power."
+                if source == "xplane"
+                else "Waiting for the first electrical reading from the simulator."
+            ),
         }
 
     def _sterile_chip(self) -> dict[str, str]:
@@ -492,7 +588,7 @@ class BridgeRuntime:
             return {
                 "id": "sterile",
                 "text": "STERILE —",
-                "tip": "MSFS not connected via SimConnect",
+                "tip": self._sim_disconnected_tip(snap, topic="sterile"),
             }
         if sterile:
             label = "STERILE on" if not queued else f"STERILE q{queued}"
@@ -500,11 +596,15 @@ class BridgeRuntime:
                 "id": "sterile",
                 "text": label,
                 "tip": (
-                    f"Printing muted below {int(self.session.sterile.thresholds.agl_ft)} "
-                    f"ft AGL or ≥40 kt on ground."
+                    f"Prints wait below {int(self.session.sterile.thresholds.agl_ft)} "
+                    f"ft AGL, or on the ground at 40 kt or more."
                 ),
             }
-        return {"id": "sterile", "text": "STERILE off", "tip": "Sterile gate clear"}
+        return {
+            "id": "sterile",
+            "text": "STERILE off",
+            "tip": "Not in the sterile window — prints are not held for altitude or taxi speed.",
+        }
 
     def _ofp_chip(self) -> dict[str, str]:
         watcher = self.session.ensure_simbrief_watcher()
@@ -540,9 +640,12 @@ class BridgeRuntime:
                 "pwr": self._power_chip().get("tip", ""),
                 "sterile": self._sterile_chip().get("tip", ""),
                 "ofp": self._ofp_chip().get("tip", ""),
+                "clock": self._clock_chip().get("tip", ""),
             },
             "auto_print": self.session.settings.auto_print(),
             "sim_connected": bool(snap and getattr(snap, "connected", False)),
+            # Lets the UI reload the Messages list when events are missed.
+            "message_count": self.session.messages.count(),
         }
 
     def _serialize_message(self, msg: Any, *, include_body: bool = False) -> dict[str, Any]:
@@ -766,8 +869,8 @@ class BridgeRuntime:
 
     def cmd_simbrief_print(self, _args: dict[str, Any]) -> dict[str, Any]:
         snap = self.session.simconnect.snapshot()
-        if not snap.connected:
-            return _err("SimConnect not connected — cannot print OFP.")
+        if snap is None or not snap.connected:
+            return _err("Simulator not connected — cannot print OFP.")
         watcher = self.session.ensure_simbrief_watcher()
         message = watcher.print_now()
         status = self.build_status()

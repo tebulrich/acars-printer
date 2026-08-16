@@ -12,3 +12,11 @@ def test_ui_modules_import(qapp):
     assert AcarsBridgeApp is not None
     assert isinstance(qapp, QApplication)
     apply_theme(qapp)
+
+
+def test_minimize_hides_to_tray_close_does_not():
+    from acars_bridge.ui.app import hide_to_tray_on_minimize
+
+    assert hide_to_tray_on_minimize(closing=False, minimized=True) is True
+    assert hide_to_tray_on_minimize(closing=True, minimized=True) is False
+    assert hide_to_tray_on_minimize(closing=False, minimized=False) is False

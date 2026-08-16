@@ -189,9 +189,9 @@ def test_auto_wx_prints_once_per_ofp(app_session, sample_plan: SimBriefFlightPla
     assert len(printer.printed) >= 1
     text = printer.printed[0][1]
     assert "EDDM" in text
-    assert text.startswith("ACARS START")
+    assert text.startswith("ACARS BEGIN")
     assert "ACARS END" in text
-    assert sample_plan.callsign in text.splitlines()[2]
+    assert sample_plan.callsign in text.splitlines()[1]
     # Second consider — no duplicate
     n = len(printer.printed)
     assert svc.consider(snap, sample_plan) == 0
@@ -242,8 +242,8 @@ def test_auto_wx_short_hop_waits_for_airborne_then_prints_once(
     assert len(printer.printed) >= 1
     text = printer.printed[0][1]
     assert "EDDM" in text
-    assert text.startswith("ACARS START")
-    assert sample_plan.callsign in text.splitlines()[2]
+    assert text.startswith("ACARS BEGIN")
+    assert sample_plan.callsign in text.splitlines()[1]
     n = len(printer.printed)
     assert svc.consider(air, sample_plan) == 0
     assert len(printer.printed) == n

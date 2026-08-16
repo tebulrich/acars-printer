@@ -78,3 +78,21 @@ def test_final_skipped_when_loadsheet_final_disabled(
     watcher._print_final(sample_plan, reason="test")
     printer = app_session.print_manager._printer
     assert printer.printed == []
+
+
+def test_auto_lock_does_not_reprint_same_ofp(
+    app_session, sample_plan: SimBriefFlightPlan
+) -> None:
+    watcher = SimBriefWatcher(
+        settings=app_session.settings,
+        print_manager=app_session.print_manager,
+        sterile=app_session.sterile,
+    )
+    watcher._lock_onto(sample_plan, print_all_three=False, bypass_eligibility=True)
+    first = len(app_session.print_manager._printer.printed)
+    assert first >= 1
+    assert watcher.state.lock_printed
+    watcher._lock_onto(sample_plan, print_all_three=False, bypass_eligibility=True)
+    assert len(app_session.print_manager._printer.printed) == first
+    watcher._lock_onto(sample_plan, print_all_three=True, bypass_eligibility=True)
+    assert len(app_session.print_manager._printer.printed) > first

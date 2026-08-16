@@ -4,6 +4,9 @@ import re
 import subprocess
 import sys
 from dataclasses import dataclass
+from urllib.parse import urlparse
+
+DEFAULT_TCP_PORT = 9100
 
 
 @dataclass(frozen=True, slots=True)
@@ -66,6 +69,35 @@ def list_win32_printer_names() -> list[str]:
         if len(row) >= 3 and row[2]:
             names.append(str(row[2]))
     return _unique(names)
+
+
+def tcp_printer_destination(host: str, port: object = None) -> str:
+    """Build ``tcp://host:port`` for a raw ESC/POS LAN printer. Empty host → ``""``."""
+    cleaned = (host or "").strip()
+    if not cleaned:
+        return ""
+    try:
+        parsed_port = int(port)  # type: ignore[arg-type]
+    except (TypeError, ValueError):
+        parsed_port = DEFAULT_TCP_PORT
+    if parsed_port < 1 or parsed_port > 65535:
+        parsed_port = DEFAULT_TCP_PORT
+    return f"tcp://{cleaned}:{parsed_port}"
+
+
+def parse_tcp_printer(destination: str) -> tuple[str, int] | None:
+    """Return ``(host, port)`` for a ``tcp://`` destination."""
+    raw = (destination or "").strip()
+    if not raw.lower().startswith("tcp://"):
+        return None
+    parsed = urlparse(raw)
+    host = (parsed.hostname or "").strip()
+    if not host:
+        return None
+    port = int(parsed.port) if parsed.port else DEFAULT_TCP_PORT
+    if port < 1 or port > 65535:
+        port = DEFAULT_TCP_PORT
+    return host, port
 
 
 def destination_for_system_printer(name: str) -> str:

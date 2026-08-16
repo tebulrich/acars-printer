@@ -20,7 +20,7 @@ def test_escpos_writes_file(app_session, fixture_text, tmp_path):
     data = path.read_bytes()
     assert b"ACARS PRINT BRIDGE" not in data
     assert b"FL360" in data
-    assert b"ACARS START" in data
+    assert b"ACARS BEGIN" in data
     assert b"ACARS END" in data
     assert b"FROM" not in data
     # Normal Font A size — not double-height (ESC ! 0x10) stretch.

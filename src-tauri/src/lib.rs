@@ -81,12 +81,46 @@ fn tray_action(app: &tauri::AppHandle, command: &str, args: Value) {
     }
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum ChromeAction {
+    Quit,
+    HideToTray,
+    Ignore,
+}
+
+fn chrome_action(close_requested: bool, minimized: bool) -> ChromeAction {
+    if close_requested {
+        ChromeAction::Quit
+    } else if minimized {
+        ChromeAction::HideToTray
+    } else {
+        ChromeAction::Ignore
+    }
+}
+
+fn show_main_window(app: &AppHandle) {
+    if let Some(window) = app.get_webview_window("main") {
+        let _ = window.unminimize();
+        let _ = window.show();
+        let _ = window.set_focus();
+    }
+}
+
+fn quit_with_sidecar(app: &AppHandle) {
+    if let Some(sidecar) = app.try_state::<Arc<BridgeSidecar>>() {
+        let sidecar = Arc::clone(&sidecar);
+        let _ = sidecar.request("quit", json_object());
+    }
+    app.exit(0);
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_notification::init())
+        .plugin(tauri_plugin_global_shortcut::Builder::new().build())
         .setup(|app| {
             // Manage state FIRST so invoke never sees "state not managed".
             let sidecar = BridgeSidecar::create();
@@ -115,14 +149,9 @@ pub fn run() {
             let _tray = TrayIconBuilder::new()
                 .icon(app.default_window_icon().unwrap().clone())
                 .menu(&menu)
-                .tooltip("ACARS Print Bridge")
+                .tooltip("ACARS Print Bridge — minimize hides here; X quits")
                 .on_menu_event(|app, event| match event.id.as_ref() {
-                    "show" => {
-                        if let Some(window) = app.get_webview_window("main") {
-                            let _ = window.show();
-                            let _ = window.set_focus();
-                        }
-                    }
+                    "show" => show_main_window(app),
                     "reprint_last" => tray_action(app, "hotkey", json!({"action": "reprint_last"})),
                     "toggle_auto_print" => {
                         tray_action(app, "hotkey", json!({"action": "toggle_auto_print"}))
@@ -142,16 +171,29 @@ pub fn run() {
                         ..
                     } = event
                     {
-                        let app = tray.app_handle();
-                        if let Some(window) = app.get_webview_window("main") {
-                            let _ = window.show();
-                            let _ = window.set_focus();
-                        }
+                        show_main_window(tray.app_handle());
                     }
                 })
                 .build(app)?;
 
             Ok(())
+        })
+        .on_window_event(|window, event| {
+            let close_requested = matches!(event, tauri::WindowEvent::CloseRequested { .. });
+            let minimized = matches!(event, tauri::WindowEvent::Resized(_))
+                && window.is_minimized().unwrap_or(false);
+            match chrome_action(close_requested, minimized) {
+                ChromeAction::Quit => {
+                    if let tauri::WindowEvent::CloseRequested { api, .. } = event {
+                        api.prevent_close();
+                    }
+                    quit_with_sidecar(window.app_handle());
+                }
+                ChromeAction::HideToTray => {
+                    let _ = window.hide();
+                }
+                ChromeAction::Ignore => {}
+            }
         })
         .invoke_handler(tauri::generate_handler![
             bridge_command,
@@ -160,4 +202,25 @@ pub fn run() {
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{chrome_action, ChromeAction};
+
+    #[test]
+    fn close_button_quits() {
+        assert_eq!(chrome_action(true, false), ChromeAction::Quit);
+        assert_eq!(chrome_action(true, true), ChromeAction::Quit);
+    }
+
+    #[test]
+    fn minimize_hides_to_tray() {
+        assert_eq!(chrome_action(false, true), ChromeAction::HideToTray);
+    }
+
+    #[test]
+    fn other_window_events_are_ignored() {
+        assert_eq!(chrome_action(false, false), ChromeAction::Ignore);
+    }
 }

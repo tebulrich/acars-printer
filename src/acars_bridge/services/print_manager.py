@@ -6,10 +6,12 @@ import threading
 import time
 from collections.abc import Callable
 from concurrent.futures import Future, ThreadPoolExecutor
+from dataclasses import replace
 from datetime import UTC, datetime
 
 from acars_bridge.models.messages import MessageRepository, StoredMessage
 from acars_bridge.printing.base import MessagePrinter, PrinterError, PrinterSettings
+from acars_bridge.printing.companion_qr import pairing_caption, should_emit_pairing_qr
 from acars_bridge.printing.formatter import ThermalMessageFormatter
 
 log = logging.getLogger(__name__)
@@ -31,6 +33,60 @@ class PrintManager:
         self._formatter = formatter or ThermalMessageFormatter()
         self._lock = threading.Lock()
         self._executor = ThreadPoolExecutor(max_workers=1, thread_name_prefix="printer")
+        self._pairing_url: str | None = None
+        self._pairing_emitted = False
+
+    def set_pairing_url(self, url: str | None) -> None:
+        cleaned = (url or "").strip() or None
+        with self._lock:
+            if cleaned != self._pairing_url:
+                self._pairing_emitted = False
+            self._pairing_url = cleaned
+
+    def _take_pairing_url(self) -> str | None:
+        with self._lock:
+            url = self._pairing_url
+            if not url or self._pairing_emitted:
+                return None
+            self._pairing_emitted = True
+            return url
+
+    def pairing_state(self) -> tuple[str | None, bool]:
+        with self._lock:
+            return self._pairing_url, self._pairing_emitted
+
+    def restore_pairing_state(self, url: str | None, emitted: bool) -> None:
+        with self._lock:
+            self._pairing_url = (url or "").strip() or None
+            self._pairing_emitted = bool(emitted) and bool(self._pairing_url)
+
+    def reset_pairing_qr(self) -> None:
+        """Allow the next flight-plan strip to carry the phone QR again."""
+        with self._lock:
+            self._pairing_emitted = False
+
+    def _with_pairing(
+        self,
+        body: str,
+        settings: PrinterSettings,
+        *,
+        ticket_type: str = "",
+    ) -> tuple[str, PrinterSettings]:
+        url, already = self.pairing_state()
+        if not should_emit_pairing_qr(
+            enabled=True,
+            url=url or "",
+            already=already,
+            ticket_type=ticket_type,
+        ):
+            return body, settings
+        taken = self._take_pairing_url()
+        if not taken:
+            return body, settings
+        caption = pairing_caption(taken)
+        if caption not in body:
+            body = body.rstrip() + "\n\n" + caption + "\n"
+        return body, replace(settings, pairing_url=taken)
 
     def shutdown(self, *, wait: bool = False) -> None:
         self._executor.shutdown(wait=wait, cancel_futures=False)
@@ -66,7 +122,7 @@ class PrintManager:
         sender: str = "SIMBRIEF",
         is_reprint: bool = False,
     ) -> str:
-        """Print a dispatch ticket as-is (no ACARS START/END wrapper)."""
+        """Print a dispatch ticket as-is (no ACARS BEGIN/END wrapper)."""
         digest = hashlib.sha256(f"{ticket_type}\n{body}".encode()).hexdigest()[:24]
         stamp = datetime.now(UTC).strftime("%Y%m%d%H%M%S%f")
         fingerprint = f"ticket:{ticket_type}:{digest}:{stamp}"
@@ -77,6 +133,8 @@ class PrintManager:
             fingerprint=fingerprint,
             sender=sender,
         )
+        if not is_reprint:
+            body, settings = self._with_pairing(body, settings, ticket_type=ticket_type)
         return self._emit(stored, body, settings, is_reprint=is_reprint)
 
     def print_tickets(

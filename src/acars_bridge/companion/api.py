@@ -49,6 +49,20 @@ def _message_dict(msg: StoredMessage, *, body: bool = True) -> dict[str, Any]:
     return row
 
 
+def companion_airports(plan: Any | None) -> dict[str, str]:
+    origin = str(getattr(plan, "origin_icao", "") or "").strip().upper()
+    dest = str(getattr(plan, "dest_icao", "") or "").strip().upper()
+    if origin in {"N/A", "-"}:
+        origin = ""
+    if dest in {"N/A", "-"}:
+        dest = ""
+    return {
+        "origin_icao": origin,
+        "dest_icao": dest,
+        "wx_icao": dest or origin,
+    }
+
+
 class CompanionApi:
     def __init__(
         self,
@@ -111,7 +125,16 @@ class CompanionApi:
                 "atis_letter": s.get("req_pdc_atis") or "",
             },
             "last_icao": s.get("req_last_icao") or "",
+            **self._simbrief_airports(),
         }
+
+    def _simbrief_airports(self) -> dict[str, str]:
+        watcher = getattr(self.session, "simbrief_watcher", None)
+        plan = getattr(getattr(watcher, "state", None), "plan", None)
+        airports = companion_airports(plan)
+        wx = airports["wx_icao"] or str(self.session.settings.get("req_last_icao") or "")
+        airports["wx_icao"] = wx.strip().upper()
+        return airports
 
     def messages(
         self,

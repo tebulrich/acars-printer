@@ -666,6 +666,7 @@ class SettingsStore:
     # --- Sterile cockpit (mutes all thermal printing) ---
 
     _STERILE_AGL_CHOICES = (
+        0,
         1000,
         1500,
         2000,
@@ -705,8 +706,29 @@ class SettingsStore:
     def sterile_agl_choices(cls) -> tuple[int, ...]:
         return cls._STERILE_AGL_CHOICES
 
+    def xplane_host(self) -> str:
+        """X-Plane UDP host. ``auto`` uses localhost plus the LAN beacon."""
+        from acars_bridge.xplane.protocol import normalize_xplane_host
+
+        return normalize_xplane_host(self.get("xplane_host", "127.0.0.1"))
+
+    def set_xplane_host(self, host: str) -> None:
+        from acars_bridge.xplane.protocol import normalize_xplane_host
+
+        self.set("xplane_host", normalize_xplane_host(host))
+
+    def xplane_port(self) -> int:
+        from acars_bridge.xplane.protocol import normalize_xplane_port
+
+        return normalize_xplane_port(self.get("xplane_port", "49000"))
+
+    def set_xplane_port(self, port: int | str) -> None:
+        from acars_bridge.xplane.protocol import normalize_xplane_port
+
+        self.set("xplane_port", str(normalize_xplane_port(port)))
+
     def print_when_powered(self) -> bool:
-        """When on, queue prints until SimConnect reports aircraft electrical power."""
+        """When on, queue prints until MSFS or stock X-Plane buses are live."""
         return (self.get("print_when_powered", "0") or "0") in {
             "1",
             "true",

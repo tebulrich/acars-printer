@@ -15,13 +15,24 @@ const HOTKEY_LABELS: Record<string, string> = {
   feed: "Feed paper",
 };
 
+function eventToBinding(e: React.KeyboardEvent): string {
+  const parts: string[] = [];
+  if (e.ctrlKey) parts.push("Ctrl");
+  if (e.shiftKey) parts.push("Shift");
+  if (e.altKey) parts.push("Alt");
+  if (e.metaKey) parts.push("Meta");
+  const key = e.key.length === 1 ? e.key.toUpperCase() : e.key;
+  if (!["Control", "Shift", "Alt", "Meta"].includes(e.key)) parts.push(key);
+  return parts.join("+");
+}
+
 export function HotkeysPage({ settings, onChange, onSave }: Props) {
   return (
     <section className="rounded border border-[var(--border)] bg-[var(--surface)] p-4">
       <h2 className="mb-1 text-sm font-semibold text-[var(--text)]">Keyboard shortcuts</h2>
       <p className="mb-3 text-sm text-[var(--muted)]">
-        Click a field and press the keys you want (for example Ctrl+Shift+R). Clear
-        a field to remove that shortcut.
+        Click a field and press the keys (for example Ctrl+Shift+R). These also
+        work while the sim has focus. Backspace clears a shortcut.
       </p>
       <label className="mb-4 flex items-center gap-2 text-sm">
         <input
@@ -39,16 +50,31 @@ export function HotkeysPage({ settings, onChange, onSave }: Props) {
             </span>
             <input
               className={inputClass}
+              readOnly
               value={settings.hotkey_bindings[action] || ""}
               placeholder="Click, then press keys"
-              onChange={(e) =>
+              onKeyDown={(e) => {
+                e.preventDefault();
+                if (e.key === "Backspace" || e.key === "Delete") {
+                  onChange({
+                    hotkey_bindings: {
+                      ...settings.hotkey_bindings,
+                      [action]: "",
+                    },
+                  });
+                  return;
+                }
+                const binding = eventToBinding(e);
+                if (!binding || ["Ctrl", "Shift", "Alt", "Meta"].includes(binding)) {
+                  return;
+                }
                 onChange({
                   hotkey_bindings: {
                     ...settings.hotkey_bindings,
-                    [action]: e.target.value,
+                    [action]: binding,
                   },
-                })
-              }
+                });
+              }}
             />
           </label>
         ))}

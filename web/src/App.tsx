@@ -66,6 +66,7 @@ const EMPTY_STATUS: BridgeStatus = {
   chip_tips: {},
   auto_print: true,
   sim_connected: false,
+  message_count: 0,
 };
 
 function normalizeBinding(seq: string): string {
@@ -143,7 +144,10 @@ export default function App() {
   const [debugText, setDebugText] = useState("");
   const [moreOpen, setMoreOpen] = useState(false);
   const toastTimer = useRef<number | null>(null);
+  const persistTimer = useRef<number | null>(null);
   const settingsRef = useRef<Settings | null>(null);
+  const messageCountRef = useRef(0);
+  const globalHotkeysOk = useRef(false);
   settingsRef.current = settings;
 
   function flash(message: string, error = false) {
@@ -160,6 +164,46 @@ export default function App() {
     setMessages(rows);
   }
 
+  function noteMessageCount(payload: unknown) {
+    if (!payload || typeof payload !== "object") return;
+    const count = (payload as { message_count?: unknown }).message_count;
+    if (typeof count !== "number") return;
+    if (count === messageCountRef.current) return;
+    messageCountRef.current = count;
+    void reloadMessages();
+  }
+
+  function runHotkey(action: string) {
+    void run(async () => {
+      await hotkey(action);
+      if (action === "toggle_auto_print") {
+        const next = await saveSettings({});
+        setSettings(next);
+      }
+      flash(`${action.replace(/_/g, " ")} ok`);
+      await reloadMessages();
+    });
+  }
+
+  function patchAndSave(patch: Partial<Settings>) {
+    setSettings((prev) => {
+      if (!prev) return prev;
+      const next = { ...prev, ...patch };
+      settingsRef.current = next;
+      if (persistTimer.current) window.clearTimeout(persistTimer.current);
+      persistTimer.current = window.setTimeout(() => {
+        void run(async () => {
+          const payload = settingsRef.current;
+          if (!payload) return;
+          const saved = await saveSettings(payload);
+          setSettings(saved);
+          if (saved.station_blocked) flash(saved.station_blocked, true);
+        });
+      }, 450);
+      return next;
+    });
+  }
+
   useEffect(() => {
     let cancelled = false;
     async function boot() {
@@ -171,6 +215,10 @@ export default function App() {
         setSettings(result.settings);
         setStatus((prev) => mergeStatus(prev, result.status));
         setMessages(result.messages);
+        messageCountRef.current =
+          typeof result.status?.message_count === "number"
+            ? result.status.message_count
+            : result.messages.length;
         setPrinters(result.printers);
         setProfiles(result.profiles);
         setProfileId(result.settings.active_print_profile || "pos80_default");
@@ -211,6 +259,7 @@ export default function App() {
     const unsubs: Array<() => void> = [];
     void onBridgeEvent("status", (payload) => {
       setStatus((prev) => mergeStatus(prev, payload));
+      noteMessageCount(payload);
     }).then((u) => unsubs.push(u));
     void onBridgeEvent("toast", (payload) => {
       const t = payload as Toast;
@@ -227,7 +276,10 @@ export default function App() {
   useEffect(() => {
     const id = window.setInterval(() => {
       void tick()
-        .then((st) => setStatus((prev) => mergeStatus(prev, st)))
+        .then((st) => {
+          setStatus((prev) => mergeStatus(prev, st));
+          noteMessageCount(st);
+        })
         .catch(() => undefined);
     }, 1000);
     return () => window.clearInterval(id);
@@ -235,27 +287,35 @@ export default function App() {
 
   useEffect(() => {
     function onKey(e: KeyboardEvent) {
+      if (globalHotkeysOk.current) return;
       const s = settingsRef.current;
       if (!s?.hotkeys_enabled) return;
       const pressed = normalizeBinding(eventToBinding(e));
       for (const [action, binding] of Object.entries(s.hotkey_bindings)) {
         if (normalizeBinding(binding) === pressed) {
           e.preventDefault();
-          void run(async () => {
-            await hotkey(action);
-            if (action === "toggle_auto_print") {
-              const next = await saveSettings({});
-              setSettings(next);
-            }
-            flash(`${action.replace(/_/g, " ")} ok`);
-            await reloadMessages();
-          });
+          void runHotkey(action);
         }
       }
     }
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
   }, []);
+
+  useEffect(() => {
+    if (!settings) return;
+    let cancelled = false;
+    void import("./hotkeys").then(async (mod) => {
+      const ok = await mod.bindGlobalHotkeys(settings, (action) => {
+        void runHotkey(action);
+      });
+      if (!cancelled) globalHotkeysOk.current = ok;
+    });
+    return () => {
+      cancelled = true;
+      void import("./hotkeys").then((mod) => mod.clearGlobalHotkeys());
+    };
+  }, [settings?.hotkeys_enabled, JSON.stringify(settings?.hotkey_bindings)]);
 
   async function run(fn: () => Promise<void>) {
     if (busy) return;
@@ -281,6 +341,18 @@ export default function App() {
     } finally {
       setBusy(false);
     }
+  }
+
+  async function printOfpNow() {
+    const r = await simbriefPrint();
+    setStatus((prev) => mergeStatus(prev, r.status));
+    flash(r.message);
+  }
+
+  async function unlockOfp() {
+    const r = await simbriefUnlock();
+    setStatus((prev) => mergeStatus(prev, r.status));
+    flash(r.message);
   }
 
   const chips = status.chips ?? EMPTY_STATUS.chips;
@@ -317,15 +389,32 @@ export default function App() {
               ["ofp", chips.ofp],
               ["clock", chips.clock],
             ] as const
-          ).map(([key, text]) => (
-            <span
-              key={key}
-              title={chipTips[key] || ""}
-              className={`rounded border border-[var(--border)] bg-[var(--bg)] px-2 py-0.5 text-xs font-medium ${chipTone(text)}`}
-            >
-              {text}
-            </span>
-          ))}
+          ).map(([key, text]) =>
+            key === "ofp" ? (
+              <button
+                key={key}
+                type="button"
+                title={
+                  chipTips[key]
+                    ? `${chipTips[key]} — click to unlock OFP`
+                    : "Unlock OFP so a new SimBrief plan can print"
+                }
+                className={`rounded border border-[var(--border)] bg-[var(--bg)] px-2 py-0.5 text-xs font-medium ${chipTone(text)}`}
+                disabled={busy}
+                onClick={() => void run(unlockOfp)}
+              >
+                {text}
+              </button>
+            ) : (
+              <span
+                key={key}
+                title={chipTips[key] || ""}
+                className={`rounded border border-[var(--border)] bg-[var(--bg)] px-2 py-0.5 text-xs font-medium ${chipTone(text)}`}
+              >
+                {text}
+              </span>
+            ),
+          )}
           <div className="relative ml-auto flex flex-wrap items-center gap-2">
             {!status.running ? (
               <button
@@ -370,6 +459,26 @@ export default function App() {
             </button>
             {moreOpen && (
               <div className="absolute right-0 top-full z-40 mt-1 min-w-[10rem] rounded border border-[var(--border)] bg-[var(--surface)] py-1 shadow-lg">
+                <button
+                  type="button"
+                  className="block w-full px-3 py-1.5 text-left text-sm hover:bg-[var(--surface-alt)]"
+                  onClick={() => {
+                    setMoreOpen(false);
+                    void run(printOfpNow);
+                  }}
+                >
+                  Print OFP
+                </button>
+                <button
+                  type="button"
+                  className="block w-full px-3 py-1.5 text-left text-sm hover:bg-[var(--surface-alt)]"
+                  onClick={() => {
+                    setMoreOpen(false);
+                    void run(unlockOfp);
+                  }}
+                >
+                  Unlock OFP
+                </button>
                 <button
                   type="button"
                   className="block w-full px-3 py-1.5 text-left text-sm hover:bg-[var(--surface-alt)]"
@@ -472,6 +581,7 @@ export default function App() {
             tapConnected={status.running}
             onProfileId={setProfileId}
             onChange={(patch) => setSettings({ ...settings, ...patch })}
+            onChangeAndSave={patchAndSave}
             onApplyProfile={(id) =>
               void run(async () => {
                 const next = await applyPrintProfile(id);
@@ -533,20 +643,8 @@ export default function App() {
                 await reloadMessages();
               })
             }
-            onPrintOfp={() =>
-              void run(async () => {
-                const r = await simbriefPrint();
-                setStatus((prev) => mergeStatus(prev, r.status));
-                flash(r.message);
-              })
-            }
-            onUnlockOfp={() =>
-              void run(async () => {
-                const r = await simbriefUnlock();
-                setStatus((prev) => mergeStatus(prev, r.status));
-                flash(r.message);
-              })
-            }
+            onPrintOfp={() => void run(printOfpNow)}
+            onUnlockOfp={() => void run(unlockOfp)}
             onCheckUpdates={() =>
               void run(async () => {
                 const r = await checkUpdates(true);

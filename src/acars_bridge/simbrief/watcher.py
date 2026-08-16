@@ -48,6 +48,7 @@ class WatcherState:
     ofp_id: str | None = None
     locked_at: float | None = None
     final_printed: bool = False
+    lock_printed: bool = False
     motion_seen: bool = False
     missed_final_pending: bool = False
     airborne_since: float | None = None
@@ -286,6 +287,7 @@ class SimBriefWatcher:
         # Automatic unlocks keep last_ofp_id so we don't immediately re-print.
         if reason == "manual":
             self.settings.set_simbrief_last_ofp_id(None)
+            self.print_manager.reset_pairing_qr()
         self.state = WatcherState(
             phase=WatcherPhase.POLLING,
             status=f"unlocked ({reason})",
@@ -369,6 +371,20 @@ class SimBriefWatcher:
         bypass_eligibility: bool,
     ) -> None:
         del bypass_eligibility  # caller decides
+        skip_auto_print = (
+            not print_all_three
+            and self.state.lock_printed
+            and bool(plan.ofp_id)
+            and plan.ofp_id == self.state.ofp_id
+        )
+        if skip_auto_print:
+            self.state.plan = plan
+            self.state.ofp_id = plan.ofp_id
+            self.state.status = (
+                f"locked · {plan.callsign} {plan.origin_icao}-{plan.dest_icao}"
+            )
+            self._persist()
+            return
         self.state.plan = plan
         self.state.ofp_id = plan.ofp_id
         self.state.phase = WatcherPhase.LOCKED
@@ -396,9 +412,11 @@ class SimBriefWatcher:
             else:
                 self.state.final_printed = False
                 self.state.phase = WatcherPhase.LOCKED
+            self.state.lock_printed = True
             self.state.status = f"print now · {plan.callsign}"
         else:
             self._print_bundle(self._bundle_fp_prelim(plan), label="lock")
+            self.state.lock_printed = True
             if self._skips_final_loadsheet(plan):
                 self.state.final_printed = True
                 self.state.phase = WatcherPhase.FINAL_PRINTED
@@ -625,6 +643,7 @@ class SimBriefWatcher:
             "ofp_id": self.state.ofp_id,
             "locked_at": self.state.locked_at,
             "final_printed": self.state.final_printed,
+            "lock_printed": self.state.lock_printed,
             "motion_seen": self.state.motion_seen,
             "missed_final_pending": self.state.missed_final_pending,
             "airborne_since": self.state.airborne_since,
@@ -659,6 +678,15 @@ class SimBriefWatcher:
         self.state.ofp_id = blob.get("ofp_id")
         self.state.locked_at = blob.get("locked_at")
         self.state.final_printed = bool(blob.get("final_printed"))
+        if "lock_printed" in blob:
+            self.state.lock_printed = bool(blob.get("lock_printed"))
+        else:
+            self.state.lock_printed = phase in {
+                WatcherPhase.LOCKED,
+                WatcherPhase.FINAL_PRINTED,
+                WatcherPhase.AIRBORNE,
+                WatcherPhase.POST_LANDING,
+            }
         self.state.motion_seen = bool(blob.get("motion_seen"))
         self.state.missed_final_pending = bool(blob.get("missed_final_pending"))
         self.state.airborne_since = blob.get("airborne_since")

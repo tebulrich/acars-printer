@@ -39,6 +39,8 @@ def compute_sterile(
     if snapshot is None or not snapshot.connected:
         return False
     limits = thresholds or SterileThresholds()
+    if limits.agl_ft <= 0:
+        return False
     if snapshot.on_ground and snapshot.ground_velocity_kt >= limits.gs_kt:
         return True
     if (not snapshot.on_ground) and snapshot.alt_agl_ft < limits.agl_ft:
@@ -55,10 +57,21 @@ def compute_unpowered(
 
     When the setting is on, hold until SimConnect reports a real power source
     or systems bus (EXT / APU / panel / avionics bus — not battery alone).
-    Unknown / disconnected / pre-telemetry also hold.
+    Unknown / disconnected / pre-telemetry also hold. X-Plane treats an
+    engine, APU, or GPU source as powered; Laminar bus volts are ignored.
+    Missing source samples do not hold. Sampled-off sources do hold.
     """
     if not require_powered:
         return False
+    if (
+        snapshot is not None
+        and snapshot.connected
+        and snapshot.source == "xplane"
+    ):
+        powered = aircraft_is_powered(snapshot)
+        if powered is None:
+            return False
+        return not powered
     powered = aircraft_is_powered(snapshot)
     if powered is None:
         return True

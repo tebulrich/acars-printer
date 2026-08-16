@@ -63,11 +63,13 @@ button:disabled {
 }
 
 .inp {
+  align-self: start;
+  height: 2.25rem;
   border-radius: 0.25rem;
   border: 1px solid var(--border);
   background: var(--input);
   color: var(--text);
-  padding: 0.375rem 0.5rem;
+  padding: 0.25rem 0.5rem;
   outline: none;
 }
 

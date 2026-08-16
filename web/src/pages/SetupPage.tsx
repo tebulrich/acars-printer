@@ -10,12 +10,14 @@ import { NetworkPage } from "./NetworkPage";
 import { PrintPage } from "./PrintPage";
 import { SettingsPage } from "./SettingsPage";
 
-type SetupSection = "printer" | "network" | "when";
+type SetupSection = "printer" | "network" | "print" | "flight" | "hotkeys";
 
 const SECTIONS: { id: SetupSection; label: string }[] = [
   { id: "printer", label: "Printer" },
   { id: "network", label: "Network" },
-  { id: "when", label: "When to print" },
+  { id: "print", label: "Print" },
+  { id: "flight", label: "Flight" },
+  { id: "hotkeys", label: "Hotkeys" },
 ];
 
 interface Props {
@@ -26,6 +28,7 @@ interface Props {
   tapConnected: boolean;
   onProfileId: (id: string) => void;
   onChange: (patch: Partial<Settings>) => void;
+  onChangeAndSave: (patch: Partial<Settings>) => void;
   onApplyProfile: (id: string) => void;
   onSaveProfile: () => void;
   onDeleteProfile: () => void;
@@ -81,32 +84,34 @@ export function SetupPage(props: Props) {
           <NetworkPage
             settings={props.settings}
             tapConnected={props.tapConnected}
-            onChange={props.onChange}
+            onChange={props.onChangeAndSave}
             onSave={props.onSaveSettings}
             onOpenCompanion={props.onOpenCompanion}
           />
         )}
-        {section === "when" && (
-          <div className="space-y-4">
-            <PrintPage
-              settings={props.settings}
-              onChange={props.onChange}
-              onSave={props.onSaveSettings}
-            />
-            <SettingsPage
-              settings={props.settings}
-              onChange={props.onChange}
-              onSave={props.onSaveSettings}
-              onPrintOfp={props.onPrintOfp}
-              onUnlockOfp={props.onUnlockOfp}
-              onCheckUpdates={props.onCheckUpdates}
-            />
-            <HotkeysPage
-              settings={props.settings}
-              onChange={props.onChange}
-              onSave={props.onSaveSettings}
-            />
-          </div>
+        {section === "print" && (
+          <PrintPage
+            settings={props.settings}
+            onChange={props.onChangeAndSave}
+            onSave={props.onSaveSettings}
+          />
+        )}
+        {section === "flight" && (
+          <SettingsPage
+            settings={props.settings}
+            onChange={props.onChangeAndSave}
+            onSave={props.onSaveSettings}
+            onPrintOfp={props.onPrintOfp}
+            onUnlockOfp={props.onUnlockOfp}
+            onCheckUpdates={props.onCheckUpdates}
+          />
+        )}
+        {section === "hotkeys" && (
+          <HotkeysPage
+            settings={props.settings}
+            onChange={props.onChangeAndSave}
+            onSave={props.onSaveSettings}
+          />
         )}
       </div>
     </div>

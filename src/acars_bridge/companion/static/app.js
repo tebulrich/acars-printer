@@ -211,10 +211,10 @@
         "Station mode — this PC polls and can send weather, ATIS, telex, and PDC.";
     } else if (s.can_send && s.wire_session && s.wire_session.ready) {
       line =
-        "Connect active — phone sends use the aircraft’s live Hoppie session (no station mode needed).";
+        "You are the FO — weather, ATIS, telex, PDC, and WILCO go through the aircraft.";
     } else {
       line =
-        "Inbox only — Connect and wait for a Hoppie/SayIntentions ACARS exchange (Fenix ATIS does not count), or enable station mode when the plane is not on Hoppie.";
+        "Inbox only until Connect sees one Hoppie/SayIntentions exchange, or turn on station mode when the plane is not on Hoppie.";
     }
     if (s.station_error) line = s.station_error;
     if (!s.can_send) {
@@ -228,11 +228,18 @@
     }
     $("statusLine").textContent = line;
 
-    if (s.last_icao && !$("wxIcao").value) $("wxIcao").value = s.last_icao;
+    if (s.wx_icao && !$("wxIcao").value) $("wxIcao").value = s.wx_icao;
+    else if (s.last_icao && !$("wxIcao").value) $("wxIcao").value = s.last_icao;
     const d = s.pdc_defaults || {};
-    if (d.station && !$("pdcStation").value) $("pdcStation").value = d.station;
-    if (d.departure && !$("pdcDep").value) $("pdcDep").value = d.departure;
-    if (d.destination && !$("pdcDest").value) $("pdcDest").value = d.destination;
+    if ((d.station || s.origin_icao) && !$("pdcStation").value) {
+      $("pdcStation").value = d.station || s.origin_icao;
+    }
+    if ((d.departure || s.origin_icao) && !$("pdcDep").value) {
+      $("pdcDep").value = d.departure || s.origin_icao;
+    }
+    if ((d.destination || s.dest_icao) && !$("pdcDest").value) {
+      $("pdcDest").value = d.destination || s.dest_icao;
+    }
     if (d.aircraft_type && !$("pdcType").value) $("pdcType").value = d.aircraft_type;
     if (d.stand && !$("pdcStand").value) $("pdcStand").value = d.stand;
     if (d.atis_letter && !$("pdcAtis").value) $("pdcAtis").value = d.atis_letter;

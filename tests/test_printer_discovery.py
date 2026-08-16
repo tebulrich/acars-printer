@@ -7,6 +7,8 @@ from acars_bridge.printing.discovery import (
     is_device_printer_destination,
     list_cups_printer_names,
     list_printer_choices,
+    parse_tcp_printer,
+    tcp_printer_destination,
 )
 
 
@@ -56,6 +58,24 @@ def test_destination_from_label_maps_cups_name():
         == "cups-raw://Brother_MFC"
     )
     assert destination_from_label("console", choices) == "console"
+
+
+def test_tcp_printer_destination_normalizes_host_and_port():
+    assert tcp_printer_destination("192.168.1.50", 9100) == "tcp://192.168.1.50:9100"
+    assert tcp_printer_destination("  10.0.0.8  ", "9100") == "tcp://10.0.0.8:9100"
+    assert tcp_printer_destination("pos.local", None) == "tcp://pos.local:9100"
+    assert tcp_printer_destination("pos.local", 0) == "tcp://pos.local:9100"
+    assert tcp_printer_destination("", 9100) == ""
+    assert tcp_printer_destination("   ") == ""
+
+
+def test_parse_tcp_printer_reads_host_and_default_port():
+    assert parse_tcp_printer("tcp://192.168.1.50:9100") == ("192.168.1.50", 9100)
+    assert parse_tcp_printer("tcp://pos.local") == ("pos.local", 9100)
+    assert parse_tcp_printer("tcp://10.0.0.8:9101/") == ("10.0.0.8", 9101)
+    assert parse_tcp_printer("win32://EPSON") is None
+    assert parse_tcp_printer("console") is None
+    assert parse_tcp_printer("") is None
 
 
 def test_is_device_printer_destination():

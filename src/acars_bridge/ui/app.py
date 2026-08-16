@@ -49,6 +49,8 @@ from acars_bridge.printing.discovery import (
     destination_from_label,
     label_for_destination,
     list_printer_choices,
+    parse_tcp_printer,
+    tcp_printer_destination,
 )
 from acars_bridge.services.actions import ActionError, PrinterActions
 from acars_bridge.services.debug_log import DebugLog
@@ -70,6 +72,11 @@ class _TapBridge(QObject):
 
 def format_window_title(version: str, width: int, height: int) -> str:
     return f"ACARS Print Bridge  {version}  ·  {width}×{height}"
+
+
+def hide_to_tray_on_minimize(*, closing: bool, minimized: bool) -> bool:
+    """Minimize hides to tray. The close button (X) quits instead."""
+    return bool(minimized) and not closing
 
 
 class AcarsBridgeApp(QMainWindow):
@@ -401,6 +408,23 @@ class AcarsBridgeApp(QMainWindow):
         if current in labels:
             printer.setCurrentText(current)
 
+        tcp = parse_tcp_printer(self.session.settings.printer_destination())
+        tcp_host = QLineEdit(tcp[0] if tcp else "")
+        tcp_host.setPlaceholderText("192.168.1.50")
+        tcp_host.setToolTip(
+            "Raw ESC/POS printer on the LAN. If set, this is used instead of the list."
+        )
+        tcp_port = QSpinBox()
+        tcp_port.setRange(1, 65535)
+        tcp_port.setValue(tcp[1] if tcp else 9100)
+        tcp_port.setToolTip("Usually 9100 (JetDirect / raw).")
+
+        def _sync_printer_list_enabled(text: str = "") -> None:
+            printer.setEnabled(not bool((text or tcp_host.text()).strip()))
+
+        tcp_host.textChanged.connect(_sync_printer_list_enabled)
+        _sync_printer_list_enabled()
+
         width = QComboBox()
         width.addItem("80 mm", "80")
         width.addItem("58 mm", "58")
@@ -509,6 +533,8 @@ class AcarsBridgeApp(QMainWindow):
         self._format_widgets = {
             "profile": profile,
             "printer": printer,
+            "tcp_host": tcp_host,
+            "tcp_port": tcp_port,
             "width": width,
             "cut": cut,
             "print_font": print_font,
@@ -532,6 +558,8 @@ class AcarsBridgeApp(QMainWindow):
 
         left = self._form_column("PRINTER")
         left.addRow("Printer", printer)
+        left.addRow("Network IP", tcp_host)
+        left.addRow("Port", tcp_port)
         left.addRow("Paper width", width)
         left.addRow("Cut / tear assist", cut)
         left.addRow("Print mode", print_mode)
@@ -729,7 +757,8 @@ class AcarsBridgeApp(QMainWindow):
 
         sterile_agl = QComboBox()
         for feet in self.session.settings.sterile_agl_choices():
-            sterile_agl.addItem(f"{feet} ft AGL", feet)
+            label = "Off" if feet == 0 else f"{feet} ft AGL"
+            sterile_agl.addItem(label, feet)
         sterile_idx = sterile_agl.findData(self.session.settings.sterile_agl_ft())
         sterile_agl.setCurrentIndex(sterile_idx if sterile_idx >= 0 else 1)
         sterile_agl.setToolTip(
@@ -743,11 +772,22 @@ class AcarsBridgeApp(QMainWindow):
             "on" if self.session.settings.print_when_powered() else "off"
         )
         print_when_powered.setToolTip(
-            "When on, queue ACARS/SimBrief prints until the main electrical bus is "
-            "live (battery, external power, or APU/engine generators). GPU plugged "
-            "in but not selected does not count. Needs SimConnect — holds while "
-            "disconnected."
+            "When on, queue ACARS/SimBrief prints until the aircraft is powered. "
+            "X-Plane: engine running, APU up, or GPU selected — not bus volts. "
+            "GPU plugged in but not selected does not count. Needs MSFS or X-Plane."
         )
+
+        xplane_host = QLineEdit(self.session.settings.xplane_host())
+        xplane_host.setPlaceholderText("127.0.0.1 or auto")
+        xplane_host.setToolTip(
+            "X-Plane UDP host. Same PC: 127.0.0.1. Other PC: LAN IP. "
+            "auto = localhost plus the X-Plane beacon. "
+            "X-Plane 12: Settings → Network → Accept incoming connections."
+        )
+        xplane_port = QSpinBox()
+        xplane_port.setRange(1, 65535)
+        xplane_port.setValue(self.session.settings.xplane_port())
+        xplane_port.setToolTip("X-Plane UDP port (default 49000). Same for XP11 and XP12.")
 
         simbrief_user = QLineEdit(self.session.settings.simbrief_user() or "")
         simbrief_user.setPlaceholderText("username or pilot ID")
@@ -786,6 +826,8 @@ class AcarsBridgeApp(QMainWindow):
             "check_updates": check_updates,
             "sterile_agl": sterile_agl,
             "print_when_powered": print_when_powered,
+            "xplane_host": xplane_host,
+            "xplane_port": xplane_port,
             "simbrief_user": simbrief_user,
             "simbrief_enabled": simbrief_enabled,
             "simbrief_grace": simbrief_grace,
@@ -966,6 +1008,8 @@ class AcarsBridgeApp(QMainWindow):
         app_col.addRow("Check for updates", w["check_updates"])
         app_col.addRow("Sterile until", w["sterile_agl"])
         app_col.addRow("Only when powered", w["print_when_powered"])
+        app_col.addRow("X-Plane host", w["xplane_host"])
+        app_col.addRow("X-Plane port", w["xplane_port"])
 
         sim_col = self._form_column("SIMBRIEF")
         sim_col.addRow("Enabled", w["simbrief_enabled"])
@@ -1000,7 +1044,7 @@ class AcarsBridgeApp(QMainWindow):
 
         help_lbl = QLabel(
             "ACARS network is on Network; what prints is on Print; shortcuts on Hotkeys. "
-            "Sterile / power queue strips until clear (needs SimConnect)."
+            "Sterile / power queue strips until clear (needs MSFS or X-Plane)."
         )
         help_lbl.setObjectName("Muted")
         help_lbl.setWordWrap(True)
@@ -1642,6 +1686,9 @@ class AcarsBridgeApp(QMainWindow):
 
         w = self._format_widgets
         s = self.session.settings
+        tcp = parse_tcp_printer(s.printer_destination())
+        w["tcp_host"].setText(tcp[0] if tcp else "")
+        w["tcp_port"].setValue(tcp[1] if tcp else 9100)
         width_idx = w["width"].findData(s.paper_width())
         if width_idx >= 0:
             w["width"].setCurrentIndex(width_idx)
@@ -1739,10 +1786,16 @@ class AcarsBridgeApp(QMainWindow):
 
     def _save_format_settings(self, *, quiet: bool = False) -> None:
         w = self._format_widgets
-        printer_label = w["printer"].currentText().strip() or "console (log only)"
-        self.session.settings.set_printer_destination(
-            destination_from_label(printer_label, self._printer_choices)
+        tcp_dest = tcp_printer_destination(
+            w["tcp_host"].text(), w["tcp_port"].value()
         )
+        if tcp_dest:
+            self.session.settings.set_printer_destination(tcp_dest)
+        else:
+            printer_label = w["printer"].currentText().strip() or "console (log only)"
+            self.session.settings.set_printer_destination(
+                destination_from_label(printer_label, self._printer_choices)
+            )
         width_value = w["width"].currentData() or "80"
         self.session.settings.set_paper_width(str(width_value))
         self.session.settings.set_cut_enabled(w["cut"].currentText() == "on")
@@ -1826,6 +1879,9 @@ class AcarsBridgeApp(QMainWindow):
         self.session.settings.set_print_when_powered(
             w["print_when_powered"].currentText() == "on"
         )
+        self.session.settings.set_xplane_host(w["xplane_host"].text())
+        self.session.settings.set_xplane_port(int(w["xplane_port"].value()))
+        self.session.apply_xplane_endpoint()
         self.session.apply_sterile_settings()
         watcher = self.session.ensure_simbrief_watcher()
         watcher.config.post_landing_grace_seconds = float(grace_min * 60)
@@ -1982,7 +2038,7 @@ class AcarsBridgeApp(QMainWindow):
             self.power_chip.setText("PWR —")
             self.power_chip.setStyleSheet(self._chip_color_style(COLORS["muted"]))
             self.power_chip.setToolTip(
-                "Aircraft power unknown — SimConnect not connected" + detail
+                "Aircraft power unknown — simulator not connected" + detail
             )
             return
 
@@ -1998,9 +2054,14 @@ class AcarsBridgeApp(QMainWindow):
                 label = f"PWR on · q{queued}"
             self.power_chip.setText(label)
             self.power_chip.setStyleSheet(self._chip_color_style(COLORS["ok"]))
+            source = getattr(snap, "source", "")
             tip = (
-                f"Aircraft powered (EXT {ext_txt}, main bus {bus_txt}). "
-                "Fenix: batteries (DC ESS), EXT PWR, or APU gen."
+                f"X-Plane: an engine, APU, or ground power is on (bus {bus_txt})."
+                if source == "xplane"
+                else (
+                    f"Aircraft is electrically powered (EXT {ext_txt}, main bus {bus_txt}). "
+                    "Fenix: batteries (DC ESS), EXT PWR, or APU gen."
+                )
             )
             if self.session.sterile.require_powered:
                 tip += " Only-when-powered: prints allowed."
@@ -2011,9 +2072,14 @@ class AcarsBridgeApp(QMainWindow):
                 label = f"PWR off · q{queued}"
             self.power_chip.setText(label)
             self.power_chip.setStyleSheet(self._chip_color_style(COLORS["warn"]))
+            source = getattr(snap, "source", "")
             tip = (
-                f"Aircraft unpowered (EXT {ext_txt}, main bus {bus_txt}). "
-                "Turn on batteries, EXT PWR, or APU gen."
+                f"X-Plane: no engine, APU, or ground power is on (bus {bus_txt})."
+                if source == "xplane"
+                else (
+                    f"Aircraft is unpowered (EXT {ext_txt}, main bus {bus_txt}). "
+                    "Turn on batteries, EXT PWR, or APU gen."
+                )
             )
             if self.session.sterile.require_powered:
                 tip += (
@@ -2022,11 +2088,24 @@ class AcarsBridgeApp(QMainWindow):
                 )
             self.power_chip.setToolTip(tip)
         else:
-            self.power_chip.setText("PWR …")
-            self.power_chip.setStyleSheet(self._chip_color_style(COLORS["accent"]))
-            self.power_chip.setToolTip(
-                "Waiting for first electrical sample from SimConnect."
-            )
+            source = getattr(snap, "source", "") if isinstance(snap, SimSnapshot) else ""
+            elec = getattr(snap, "electrical", None) if isinstance(snap, SimSnapshot) else None
+            if source == "xplane" and elec is not None:
+                self.power_chip.setText("PWR ?")
+                self.power_chip.setStyleSheet(self._chip_color_style(COLORS["muted"]))
+                self.power_chip.setToolTip(
+                    "Power is unknown — no engine, APU, or ground-power sample yet. "
+                    "Prints are not held for power."
+                )
+            else:
+                self.power_chip.setText("PWR —")
+                self.power_chip.setStyleSheet(self._chip_color_style(COLORS["muted"]))
+                self.power_chip.setToolTip(
+                    "X-Plane position is live, but this aircraft is not publishing "
+                    "default electrical data. Prints are not held for power."
+                    if source == "xplane"
+                    else "Waiting for the first electrical reading from the simulator."
+                )
 
     def _update_sterile_chip(self, snap: object | None) -> None:
         from acars_bridge.simconnect.monitor import SimSnapshot
@@ -2043,7 +2122,7 @@ class AcarsBridgeApp(QMainWindow):
             self.sterile_chip.setText("STERILE —")
             self.sterile_chip.setStyleSheet(self._chip_color_style(COLORS["muted"]))
             self.sterile_chip.setToolTip(
-                "MSFS not connected via SimConnect"
+                "Simulator not connected (MSFS or X-Plane)"
                 + detail
                 + ". Start the sim (main menu is enough)."
             )
@@ -2067,7 +2146,7 @@ class AcarsBridgeApp(QMainWindow):
         snap = self.session.simconnect.snapshot()
         if snap is None or not snap.connected:
             self._flash(
-                "Simulator has to be running for Print OFP now.",
+                "Simulator has to be running (MSFS or X-Plane) for Print OFP now.",
                 error=True,
             )
             return
@@ -2266,8 +2345,12 @@ class AcarsBridgeApp(QMainWindow):
         QTimer.singleShot(2000, lambda: os._exit(0))
 
     def changeEvent(self, event) -> None:  # noqa: N802 - Qt API
-        # Minimize stays on the taskbar (normal). No hide-to-tray.
         super().changeEvent(event)
+        if event.type() != Qt.Type.WindowStateChange:
+            return
+        minimized = bool(self.windowState() & Qt.WindowState.WindowMinimized)
+        if hide_to_tray_on_minimize(closing=self._closing, minimized=minimized):
+            self.hide()
 
 
 def _lock_holder_pid(lock: object) -> int | None:

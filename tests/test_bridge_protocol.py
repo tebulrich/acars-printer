@@ -42,8 +42,10 @@ def test_link_status_info_note_is_not_an_error(runtime: BridgeRuntime) -> None:
     link = runtime._link_chip()
     assert link["state"] in {"ok", "busy"}
     assert "err" not in link["text"].lower()
-    assert "waiting" in link["text"].lower() or "hoppie ok" in link["text"].lower()
-    assert "sim traffic" in (link.get("tip") or "").lower()
+    assert link["text"] == "Hoppie wait"
+    tip = (link.get("tip") or "").lower()
+    assert "first" in tip and "acars" in tip
+    assert "sim traffic" not in tip
 
 
 def test_link_status_real_failure_says_issue_not_err(runtime: BridgeRuntime) -> None:
@@ -66,6 +68,7 @@ def test_link_status_hoppie_rejected_logon(runtime: BridgeRuntime) -> None:
 
 def test_link_status_hoppie_ok_shows_callsign(runtime: BridgeRuntime) -> None:
     runtime.tap.status.running = True
+    runtime.tap.status.network_id = "hoppie"
     runtime.tap.status.exchanges = 4
     runtime.session.wire_session.update(
         logon="secret", from_cs="DLH4MC", network_id="hoppie"
@@ -73,6 +76,152 @@ def test_link_status_hoppie_ok_shows_callsign(runtime: BridgeRuntime) -> None:
     link = runtime._link_chip()
     assert link["state"] == "ok"
     assert link["text"] == "Hoppie ok · DLH4MC"
+
+
+def test_link_status_uses_network_name_for_si_and_gfo(runtime: BridgeRuntime) -> None:
+    runtime.tap.status.running = True
+    runtime.tap.status.exchanges = 2
+    runtime.tap.status.network_id = "sayintentions"
+    runtime.session.wire_session.update(
+        logon="secret", from_cs="DLH4MC", network_id="sayintentions"
+    )
+    assert runtime._link_chip()["text"] == "SI ok · DLH4MC"
+
+    runtime.tap.status.network_id = "pmdg_gfo"
+    runtime.session.wire_session.update(
+        logon="secret", from_cs="BAW12G", network_id="pmdg_gfo"
+    )
+    assert runtime._link_chip()["text"] == "GFO ok · BAW12G"
+
+
+def test_power_chip_xplane_sources_off_says_off(runtime: BridgeRuntime) -> None:
+    from acars_bridge.simconnect.monitor import SimSnapshot
+
+    class _Snap:
+        def snapshot(self) -> SimSnapshot:
+            return SimSnapshot(
+                connected=True,
+                source="xplane",
+                main_bus_voltage=28.0,
+                apu_generator_on=False,
+                electrical={
+                    "ELECTRICAL BUS VOLTAGE:1": 28.0,
+                    "XP GENERATOR ON:1": 0.0,
+                    "XP GENERATOR ON:2": 0.0,
+                    "APU GENERATOR SWITCH": 0.0,
+                    "XP APU RUNNING": 0.0,
+                    "XP ENG RUNNING:1": 0.0,
+                    "XP AVIONICS ON": 1.0,
+                },
+                detail="X-Plane 12",
+            )
+
+        def start(self) -> None:
+            return None
+
+        def stop(self) -> None:
+            return None
+
+    runtime.session.simconnect = _Snap()  # type: ignore[assignment]
+    chip = runtime._power_chip()
+    assert chip["text"] == "PWR off"
+    tip = (chip.get("tip") or "").lower()
+    assert "engine" in tip or "apu" in tip or "ground" in tip
+
+
+def test_power_chip_xplane_buses_only_are_unknown(runtime: BridgeRuntime) -> None:
+    from acars_bridge.simconnect.monitor import SimSnapshot
+
+    class _Snap:
+        def snapshot(self) -> SimSnapshot:
+            return SimSnapshot(
+                connected=True,
+                source="xplane",
+                main_bus_voltage=28.0,
+                electrical={"ELECTRICAL BUS VOLTAGE:1": 28.0},
+                detail="X-Plane 12",
+            )
+
+        def start(self) -> None:
+            return None
+
+        def stop(self) -> None:
+            return None
+
+    runtime.session.simconnect = _Snap()  # type: ignore[assignment]
+    chip = runtime._power_chip()
+    assert chip["text"] == "PWR ?"
+    tip = (chip.get("tip") or "").lower()
+    assert "unknown" in tip
+
+
+def test_power_chip_xplane_generator_says_on(runtime: BridgeRuntime) -> None:
+    from acars_bridge.simconnect.monitor import SimSnapshot
+
+    class _Snap:
+        def snapshot(self) -> SimSnapshot:
+            return SimSnapshot(
+                connected=True,
+                source="xplane",
+                main_bus_voltage=28.0,
+                apu_generator_on=False,
+                electrical={
+                    "ELECTRICAL BUS VOLTAGE:1": 28.0,
+                    "XP GENERATOR ON:1": 1.0,
+                    "APU GENERATOR SWITCH": 0.0,
+                },
+                detail="X-Plane 12",
+            )
+
+        def start(self) -> None:
+            return None
+
+        def stop(self) -> None:
+            return None
+
+    runtime.session.simconnect = _Snap()  # type: ignore[assignment]
+    chip = runtime._power_chip()
+    assert chip["text"] == "PWR on"
+    assert "engine" in (chip.get("tip") or "").lower()
+
+
+def test_power_chip_xplane_ground_power_says_on(runtime: BridgeRuntime) -> None:
+    from acars_bridge.simconnect.monitor import SimSnapshot
+
+    class _Snap:
+        def snapshot(self) -> SimSnapshot:
+            return SimSnapshot(
+                connected=True,
+                source="xplane",
+                main_bus_voltage=28.0,
+                external_power_on=True,
+                apu_generator_on=False,
+                electrical={
+                    "ELECTRICAL BUS VOLTAGE:1": 28.0,
+                    "XP GENERATOR ON:1": 0.0,
+                    "XP GPU ON": 1.0,
+                    "XP GPU VOLTS": 28.0,
+                },
+                detail="X-Plane 12",
+            )
+
+        def start(self) -> None:
+            return None
+
+        def stop(self) -> None:
+            return None
+
+    runtime.session.simconnect = _Snap()  # type: ignore[assignment]
+    chip = runtime._power_chip()
+    assert chip["text"] == "PWR on"
+    assert "ground" in (chip.get("tip") or "").lower()
+
+
+def test_sterile_off_is_a_settings_choice(runtime: BridgeRuntime) -> None:
+    data = _ok(runtime, "get_settings")
+    assert 0 in data["sterile_agl_choices"]
+    saved = _ok(runtime, "save_settings", sterile_agl_ft=0)
+    assert saved["sterile_agl_ft"] == 0
 
 
 def test_boot_returns_meta_settings_and_status(runtime: BridgeRuntime) -> None:
@@ -99,6 +248,8 @@ def test_get_and_save_settings_roundtrip(runtime: BridgeRuntime) -> None:
         printable_types=["cpdlc"],
         sterile_agl_ft=3000,
         print_when_powered=True,
+        xplane_host="10.1.2.3",
+        xplane_port=49010,
         simbrief_user="pilot",
         simbrief_enabled=True,
         wx_auto_enabled=True,
@@ -113,6 +264,10 @@ def test_get_and_save_settings_roundtrip(runtime: BridgeRuntime) -> None:
     assert saved["printable_types"] == ["cpdlc"]
     assert saved["sterile_agl_ft"] == 3000
     assert saved["wx_auto_nm"] == 120
+    assert saved["xplane_host"] == "10.1.2.3"
+    assert saved["xplane_port"] == 49010
+    auto = _ok(runtime, "save_settings", xplane_host="auto")
+    assert auto["xplane_host"] == "auto"
 
 
 def test_save_hoppie_logon_for_companion_sends(runtime: BridgeRuntime) -> None:
@@ -193,6 +348,55 @@ def test_messages_list_print_and_reprint(runtime: BridgeRuntime) -> None:
     assert printed["result"] in {"printed", "deferred"}
     last = _ok(runtime, "reprint_last")
     assert last["result"] in {"printed", "deferred"}
+
+
+def test_status_includes_message_count_for_ui_autorefresh(runtime: BridgeRuntime) -> None:
+    """UI polls tick/status; message_count lets it reload without relying only on events."""
+    _ok(runtime, "boot")
+    assert _ok(runtime, "get_status")["message_count"] == 0
+    runtime.session.ingestion.ingest(
+        [
+            HoppieMessage(
+                callsign="SWR14",
+                sender="EDDM",
+                recipient="SWR14",
+                message_type=MessageType.TELEX,
+                raw_payload="telex a",
+                normalized_body="A",
+            ),
+            HoppieMessage(
+                callsign="SWR14",
+                sender="EDDM",
+                recipient="SWR14",
+                message_type=MessageType.TELEX,
+                raw_payload="telex b",
+                normalized_body="B",
+            ),
+            HoppieMessage(
+                callsign="SWR14",
+                sender="EDDM",
+                recipient="SWR14",
+                message_type=MessageType.TELEX,
+                raw_payload="telex c",
+                normalized_body="C",
+            ),
+        ],
+        auto_print=False,
+    )
+    status = _ok(runtime, "get_status")
+    assert status["message_count"] == 3
+    tick_status = _ok(runtime, "tick")
+    assert tick_status["message_count"] == 3
+
+
+def test_tap_new_messages_emit_event(runtime: BridgeRuntime) -> None:
+    runtime.drain_events()
+    runtime._on_new_messages(3)
+    events = runtime.drain_events()
+    assert any(
+        e.get("event") == "new_messages" and e.get("data", {}).get("count") == 3
+        for e in events
+    )
 
 
 def test_toggle_auto_print(runtime: BridgeRuntime) -> None:

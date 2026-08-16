@@ -9,8 +9,8 @@
   --ok: #80ed99;
   --warn: #f4a261;
   --danger: #e76f51;
-  --mono: "IBM Plex Mono", ui-monospace, Consolas, monospace;
-  --sans: "IBM Plex Sans", system-ui, -apple-system, sans-serif;
+  --mono: ui-monospace, "Cascadia Mono", Consolas, monospace;
+  --sans: system-ui, -apple-system, "Segoe UI", sans-serif;
   --safe-bottom: env(safe-area-inset-bottom, 0px);
   --safe-top: env(safe-area-inset-top, 0px);
   --radius: 14px;
@@ -414,8 +414,15 @@ button:disabled {
 
 .reply-row {
   display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(96px, 1fr));
-  gap: 8px;
+  grid-template-columns: repeat(auto-fit, minmax(108px, 1fr));
+  gap: 10px;
+}
+
+.reply-row button {
+  min-height: 52px;
+  font-size: 1.05rem;
+  font-weight: 700;
+  letter-spacing: 0.04em;
 }
 
 .reply-row.hidden {

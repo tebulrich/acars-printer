@@ -7,14 +7,16 @@ const inputClass = "inp text-sm";
 function Field({
   label,
   hint,
+  className,
   children,
 }: {
   label: string;
   hint?: string;
+  className?: string;
   children: ReactNode;
 }) {
   return (
-    <label className="grid gap-1 text-sm">
+    <label className={`grid gap-1 self-start text-sm ${className ?? ""}`.trim()}>
       <span className="font-medium text-[var(--text)]">{label}</span>
       {children}
       {hint ? <span className="text-xs text-[var(--muted)]">{hint}</span> : null}
@@ -45,9 +47,9 @@ export function NetworkPage({
     if (checked && tapConnected) {
       const go = window.confirm(
         "Connect is already running.\n\n" +
-          "Station mode makes this PC use your callsign on Hoppie. That usually " +
-          "conflicts with the aircraft.\n\n" +
-          "Only continue if the plane is NOT logged into Hoppie with this callsign.\n\n" +
+          "Station mode logs this PC onto Hoppie with your callsign. That " +
+          "usually conflicts with the aircraft.\n\n" +
+          "Enable only if the plane is not on Hoppie.\n\n" +
           "Enable station mode anyway?",
       );
       if (!go) return;
@@ -62,13 +64,12 @@ export function NetworkPage({
           Watching &amp; printing
         </h2>
         <p className="mb-3 text-sm text-[var(--muted)]">
-          Match the aircraft ACARS network. For normal printing the plane keeps
-          its own Hoppie logon. Nothing else is required here.
+          Match the aircraft ACARS network. The plane keeps its own logon.
         </p>
-        <div className="grid max-w-xl gap-3">
-          <Field label="ACARS network">
+        <div className="grid max-w-xl items-start gap-3 sm:grid-cols-2">
+          <Field className="sm:col-span-2" label="ACARS network">
             <select
-              className={inputClass}
+              className={`${inputClass} max-w-xs`}
               value={settings.acars_network}
               onChange={(e) => onChange({ acars_network: e.target.value })}
             >
@@ -79,33 +80,19 @@ export function NetworkPage({
               ))}
             </select>
           </Field>
-          <Field
-            label="Callsign filter"
-            hint={
-              "Optional. Leave empty to print every flight. The phone then follows " +
-              "SimBrief or the last ACARS callsign. Set a callsign only if you want " +
-              "to force one (also used in station mode)."
-            }
-          >
+          <Field label="Callsign filter" hint="Empty = print every flight.">
             <input
               className={inputClass}
               value={settings.callsign}
-              placeholder="Auto (SimBrief / last ACARS)"
+              placeholder="Auto"
               onChange={(e) => onChange({ callsign: e.target.value.toUpperCase() })}
             />
           </Field>
-          <Field
-            label="Aircraft registration"
-            hint={
-              "Optional. Printed on ACARS strip headers. If set, it is used instead " +
-              "of the SimBrief tail for auto weather strips. Leave empty to omit the " +
-              "tail on ACARS headers — SimBrief OFP tickets still show the OFP registration."
-            }
-          >
+          <Field label="Aircraft registration" hint="Optional. ACARS header only.">
             <input
               className={inputClass}
               value={settings.aircraft_registration}
-              placeholder="e.g. D-AILA"
+              placeholder="D-AILA"
               onChange={(e) =>
                 onChange({ aircraft_registration: e.target.value.toUpperCase() })
               }
@@ -119,44 +106,39 @@ export function NetworkPage({
           Companion station mode
         </h2>
         <p className="mb-3 text-sm text-[var(--muted)]">
-          Leave this off in normal use. After you press Connect and the plane is
-          on Hoppie, the phone can already send weather, ATIS, telex, and PDC
-          using the aircraft. Turn station mode on only when the plane is not
-          logged into Hoppie and you still want the phone to send as your
-          callsign from this PC.
+          Off unless the aircraft is not on Hoppie and the phone still needs to send.
         </p>
-        <div className="grid max-w-xl gap-3">
-          <label className="grid gap-1 text-sm">
-            <span className="flex items-center gap-2">
-              <input
-                type="checkbox"
-                checked={settings.companion_station_enabled}
-                onChange={(e) => toggleStation(e.target.checked)}
-              />
+        <div className="grid max-w-xl items-start gap-3">
+          <label className="flex items-start gap-2 text-sm">
+            <input
+              type="checkbox"
+              className="mt-0.5"
+              checked={settings.companion_station_enabled}
+              onChange={(e) => toggleStation(e.target.checked)}
+            />
+            <span>
               Enable station mode
-            </span>
-            <span className="pl-6 text-xs text-[var(--muted)]">
-              This PC then uses your callsign on Hoppie without the sim. When you
-              save, we check Hoppie. If the callsign is already taken by the
-              aircraft, station mode turns off by itself.
+              <span className="mt-0.5 block text-xs text-[var(--muted)]">
+                This PC uses your callsign on Hoppie. Turns off if the aircraft
+                already holds it.
+              </span>
             </span>
           </label>
-
           <Field
             label="Hoppie logon code"
             hint={
               settings.has_hoppie_logon
-                ? "Saved for station mode. Leave blank to keep it. Phone sends while Connect is active use the plane instead."
-                : "Only needed for station mode. Same code as hoppie.nl; stored encrypted. Not required when the phone sends through Connect and the plane."
+                ? "Saved. Leave blank to keep it."
+                : "Station mode only. Stored encrypted."
             }
           >
             <input
-              className={inputClass}
+              className={`${inputClass} max-w-xs`}
               type="password"
               autoComplete="off"
               value={logonDraft}
               placeholder={
-                settings.has_hoppie_logon ? "•••••••• (saved)" : "Enter logon code"
+                settings.has_hoppie_logon ? "•••••••• (saved)" : "Logon code"
               }
               onChange={(e) => {
                 setLogonDraft(e.target.value);
@@ -166,8 +148,7 @@ export function NetworkPage({
           </Field>
           {stationOn && !settings.callsign && !settings.has_hoppie_logon ? (
             <p className="text-xs text-[var(--muted)]">
-              Callsign will auto-follow SimBrief or the last ACARS message when
-              available.
+              Callsign follows SimBrief or the last ACARS message.
             </p>
           ) : null}
         </div>
@@ -176,28 +157,22 @@ export function NetworkPage({
       <section className="rounded border border-[var(--border)] bg-[var(--surface)] p-4">
         <h2 className="mb-1 text-sm font-semibold text-[var(--text)]">Phone companion</h2>
         <p className="mb-3 text-sm text-[var(--muted)]">
-          Open a page on your phone (same Wi-Fi) to read the inbox, reprint, and
-          reply WILCO. Anyone on your home network can open the URL.
+          Same Wi-Fi inbox. Anyone on this LAN can open the URL.
         </p>
-        <div className="grid max-w-xl gap-3">
-          <label className="grid gap-1 text-sm">
-            <span className="flex items-center gap-2">
-              <input
-                type="checkbox"
-                checked={settings.companion_enabled}
-                onChange={(e) => onChange({ companion_enabled: e.target.checked })}
-              />
-              Let my phone show the message inbox
-            </span>
-            <span className="pl-6 text-xs text-[var(--muted)]">
-              Starts a local page on your Wi-Fi. Copy the URL after saving.
-              Phone sends need Connect (after one Hoppie message) or station
-              mode above.
-            </span>
+        <div className="grid max-w-xl items-start gap-3 sm:grid-cols-[1fr_7.5rem]">
+          <label className="flex items-start gap-2 text-sm sm:col-span-2">
+            <input
+              type="checkbox"
+              className="mt-0.5"
+              checked={settings.companion_enabled}
+              onChange={(e) => onChange({ companion_enabled: e.target.checked })}
+            />
+            Let my phone show the message inbox
           </label>
           <Field
-            label="Port number"
-            hint="Usually leave at 8765 unless something else on your PC already uses it."
+            className="sm:col-span-2 sm:max-w-[7.5rem]"
+            label="Port"
+            hint="Default 8765."
           >
             <input
               type="number"
@@ -209,11 +184,21 @@ export function NetworkPage({
             />
           </Field>
           {settings.companion_enabled && settings.companion_url && (
-            <div className="rounded border border-[var(--border)] bg-[var(--bg)] p-3 text-sm">
+            <div className="rounded border border-[var(--border)] bg-[var(--bg)] p-3 text-sm sm:col-span-2">
               <div className="mb-1 text-xs uppercase tracking-wide text-[var(--muted)]">
                 Phone URL
               </div>
               <code className="break-all text-[13px]">{settings.companion_url}</code>
+              {settings.companion_qr_png ? (
+                <img
+                  alt="QR code for the phone companion"
+                  className="mt-3 h-36 w-36 bg-white p-1"
+                  src={`data:image/png;base64,${settings.companion_qr_png}`}
+                />
+              ) : null}
+              <p className="mt-2 text-xs text-[var(--muted)]">
+                Also printed on the flight-plan strip. Bookmark it — no PIN.
+              </p>
             </div>
           )}
         </div>

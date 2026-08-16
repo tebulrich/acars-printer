@@ -37,7 +37,7 @@ def test_cups_destination_sends_plain_text(app_session, fixture_text):
     assert args[0][:3] == ["lp", "-d", "Brother_MFC"]
     assert "document-format=text/plain" in args[0]
     assert "raw" not in args[0]
-    assert b"ACARS START" in kwargs["input"]
+    assert b"ACARS BEGIN" in kwargs["input"]
     assert b"FL360" in kwargs["input"]
     assert b"FROM" not in kwargs["input"]
     assert not kwargs["input"].startswith(b"\x1b")

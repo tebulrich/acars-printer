@@ -5,6 +5,8 @@ import type { BridgeStatus } from "../types";
 describe("chipTone", () => {
   it("marks hoppie ok as success", () => {
     expect(chipTone("Hoppie ok · DLH4MC")).toContain("success");
+    expect(chipTone("SI ok · DLH4MC")).toContain("success");
+    expect(chipTone("GFO ok · BAW12G")).toContain("success");
   });
 
   it("marks errors as danger", () => {
@@ -14,6 +16,11 @@ describe("chipTone", () => {
 
   it("marks idle as muted", () => {
     expect(chipTone("LINK off")).toContain("muted");
+  });
+
+  it("marks hoppie wait as in-progress", () => {
+    expect(chipTone("Hoppie wait")).toContain("accent");
+    expect(chipTone("PWR ?")).toContain("muted");
   });
 
   it("tolerates undefined", () => {
@@ -53,6 +60,7 @@ describe("mergeStatus", () => {
     chip_tips: {},
     auto_print: true,
     sim_connected: false,
+    message_count: 0,
   };
 
   it("keeps chips when payload is partial or null", () => {

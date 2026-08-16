@@ -62,7 +62,9 @@ class AppSession:
             printer = EscPosMessagePrinter()
         else:
             printer = ConsoleMessagePrinter()
+        pairing_url, pairing_emitted = self.print_manager.pairing_state()
         self.print_manager = PrintManager(self.messages, printer)
+        self.print_manager.restore_pairing_state(pairing_url, pairing_emitted)
         # Keep sterile flush synchronous with fake printers (unit tests).
         if use_fake_printer:
             self.sterile.set_flush_runner(None)
@@ -88,6 +90,11 @@ class AppSession:
                 sterile=self.sterile,
             )
         return self.auto_wx
+
+    def apply_xplane_endpoint(self) -> None:
+        setter = getattr(self.simconnect, "set_xplane_endpoint", None)
+        if callable(setter):
+            setter(self.settings.xplane_host(), self.settings.xplane_port())
 
     def apply_sterile_settings(self) -> None:
         self.sterile.set_thresholds(
@@ -137,7 +144,7 @@ def build_session(
     station = StationTransport(hoppie)
     observer = ObserverTransport(hoppie)
     sterile = _sterile_from_settings(settings)
-    simconnect = create_simconnect_monitor()
+    simconnect = create_simconnect_monitor(settings)
 
     destination = settings.printer_destination()
     if use_fake_printer:

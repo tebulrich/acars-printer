@@ -196,7 +196,14 @@ export function chipTone(text: string | null | undefined): string {
     return "text-[var(--danger)]";
   }
   if (t.includes("ok") || t.includes("on") || t.includes("seen")) return "text-[var(--success)]";
-  if (t.includes("…") || t.includes("waiting") || t.includes("q")) return "text-[var(--accent)]";
+  if (
+    t.includes("…")
+    || t.includes("waiting")
+    || t.includes("wait")
+    || t.includes("q")
+  ) {
+    return "text-[var(--accent)]";
+  }
   return "text-[var(--muted)]";
 }
 

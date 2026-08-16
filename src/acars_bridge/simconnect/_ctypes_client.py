@@ -429,6 +429,7 @@ class SimConnectSession:
         )
         return SimSnapshot(
             connected=True,
+            source="simconnect",
             on_ground=bool(t.on_ground > 0.5),
             ground_velocity_kt=float(t.ground_velocity),
             alt_agl_ft=float(t.alt_agl),

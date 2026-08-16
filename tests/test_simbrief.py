@@ -89,7 +89,7 @@ def test_tickets_keep_full_route(sample_plan: SimBriefFlightPlan) -> None:
     text = render_flight_plan_ticket(sample_plan, width=32)
     for token in sample_plan.route.split():
         assert token in text
-    assert "ACARS START" in text
+    assert "ACARS BEGIN" in text
     assert "01JAN30" in text
     assert "DATE:" in text
     assert "STD:" in text
@@ -108,7 +108,7 @@ def test_tickets_keep_full_route(sample_plan: SimBriefFlightPlan) -> None:
     assert "01JAN30" in takeoff
     assert "STD:" in takeoff
     assert "PRELIMINARY" in sheet
-    assert "ACARS START" in sheet
+    assert "ACARS BEGIN" in sheet
     assert "ACARS END" in sheet
 
 
@@ -151,6 +151,21 @@ def test_sterile_compute() -> None:
         compute_sterile(
             SimSnapshot(connected=True, on_ground=False, ground_velocity_kt=200, alt_agl_ft=5500),
             thresholds=high,
+        )
+        is False
+    )
+    off = SterileThresholds(agl_ft=0)
+    assert (
+        compute_sterile(
+            SimSnapshot(connected=True, on_ground=False, ground_velocity_kt=200, alt_agl_ft=200),
+            thresholds=off,
+        )
+        is False
+    )
+    assert (
+        compute_sterile(
+            SimSnapshot(connected=True, on_ground=True, ground_velocity_kt=80, alt_agl_ft=0),
+            thresholds=off,
         )
         is False
     )
@@ -846,8 +861,8 @@ def test_print_ticket_no_acars_wrapper(app_session, sample_plan: SimBriefFlightP
         "SELECT message_type, normalized_body FROM messages ORDER BY id DESC LIMIT 1"
     ).fetchone()
     assert row["message_type"] == "flight_plan"
-    assert "ACARS BEGIN" not in row["normalized_body"]
-    assert "ACARS START" in row["normalized_body"]
+    assert "ACARS BEGIN" in row["normalized_body"]
+    assert "ACARS START" not in row["normalized_body"]
     for token in sample_plan.route.split():
         assert token in row["normalized_body"]
 

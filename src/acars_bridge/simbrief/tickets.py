@@ -9,7 +9,7 @@ from acars_bridge.simbrief.models import SimBriefFlightPlan
 _PLACEHOLDER = re.compile(r"\{(\w+)\}")
 
 _FLIGHT_PLAN_TEMPLATE = """
-**ACARS START**
+**ACARS BEGIN**
 ===
 **{Callsign}**
 {AircraftReg}
@@ -157,7 +157,7 @@ def render_loadsheet_ticket(
     width: int = 32,
 ) -> str:
     lines: list[str] = [
-        "ACARS START",
+        "ACARS BEGIN",
         "LOAD SHEET",
         label.upper(),
         _divider(width, "="),
@@ -209,7 +209,7 @@ def render_loadsheet_ticket(
 def render_takeoff_data_ticket(plan: SimBriefFlightPlan, *, width: int = 32) -> str:
     """Thermal card from real SimBrief OFP weights / fuel / runway fields."""
     lines: list[str] = [
-        "ACARS START",
+        "ACARS BEGIN",
         "TAKEOFF DATA",
         _divider(width, "="),
         f"{plan.callsign}  {plan.origin_icao}-{plan.dest_icao}",

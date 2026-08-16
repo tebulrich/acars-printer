@@ -1,0 +1,8 @@
+{
+  "name": "ACARS FO Station",
+  "short_name": "ACARS FO",
+  "start_url": "/",
+  "display": "standalone",
+  "background_color": "#12161c",
+  "theme_color": "#12161c"
+}

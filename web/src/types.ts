@@ -24,6 +24,8 @@ export interface BridgeStatus {
   chip_tips: Record<string, string>;
   auto_print: boolean;
   sim_connected: boolean;
+  /** Total stored messages; UI reloads list when this changes. */
+  message_count?: number;
 }
 
 export interface Settings {
@@ -62,6 +64,8 @@ export interface Settings {
   sterile_agl_ft: number;
   sterile_agl_choices: number[];
   print_when_powered: boolean;
+  xplane_host: string;
+  xplane_port: number;
   simbrief_user: string;
   simbrief_enabled: boolean;
   simbrief_post_landing_grace_seconds: number;
@@ -74,6 +78,7 @@ export interface Settings {
   companion_port: number;
   companion_token: string;
   companion_url: string;
+  companion_qr_png?: string;
   station_blocked?: string;
 }
 

@@ -37,7 +37,7 @@ def test_test_print_action(app_session) -> None:
     actions.test_print()
     printer = app_session.print_manager._printer
     assert len(printer.printed) == 1
-    assert "ACARS START" in printer.printed[0][1]
+    assert "ACARS BEGIN" in printer.printed[0][1]
 
 
 def test_feed_on_fake_printer(app_session) -> None:

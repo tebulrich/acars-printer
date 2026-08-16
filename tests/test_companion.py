@@ -157,7 +157,7 @@ def test_companion_send_blocked_without_station(tmp_path):
         runtime.shutdown()
 
 
-def test_companion_telex_wx_and_pdc_when_station_on(tmp_path, fixture_text):
+def test_companion_telex_wx_and_pdc_when_station_on(tmp_path, fixture_text, monkeypatch):
     port = _free_port()
     router = _Router(
         {
@@ -176,6 +176,15 @@ def test_companion_telex_wx_and_pdc_when_station_on(tmp_path, fixture_text):
     # Station off at boot so poller does not race the HTTP assertions.
     session.settings.set_companion_station_enabled(False)
     session.settings.set_companion_port(port)
+
+    from acars_bridge.hoppie.vatsim_atis import VatsimAtis
+
+    monkeypatch.setattr(
+        "acars_bridge.services.outbound.list_vatsim_atis",
+        lambda icao, client=None: [
+            VatsimAtis(callsign="EGLL_D_ATIS", lines=["DEP ATIS"], atis_code="B")
+        ],
+    )
 
     runtime = BridgeRuntime(session, tap_factory=FakeTapService)
     try:
@@ -309,3 +318,33 @@ def test_session_outbound_still_blocked_by_default(tmp_path):
     with pytest.raises(SendNotAllowedError):
         session.outbound.send_telex("ATC", "hi")
     session.close()
+
+
+def test_companion_status_prefills_simbrief_airports(tmp_path):
+    from types import SimpleNamespace
+
+    from acars_bridge.companion.api import CompanionApi, companion_airports
+
+    airports = companion_airports(
+        SimpleNamespace(origin_icao="EDDF", dest_icao="KJFK")
+    )
+    assert airports == {
+        "origin_icao": "EDDF",
+        "dest_icao": "KJFK",
+        "wx_icao": "KJFK",
+    }
+    assert companion_airports(None)["wx_icao"] == ""
+
+    session = build_session(AppPaths.for_testing(tmp_path), use_fake_printer=True)
+    runtime = BridgeRuntime(session, tap_factory=FakeTapService)
+    try:
+        watcher = session.ensure_simbrief_watcher()
+        watcher.state.plan = SimpleNamespace(
+            origin_icao="EDDF", dest_icao="KJFK", callsign="DLH4A"
+        )
+        status = CompanionApi(runtime).status()
+        assert status["origin_icao"] == "EDDF"
+        assert status["dest_icao"] == "KJFK"
+        assert status["wx_icao"] == "KJFK"
+    finally:
+        runtime.shutdown()

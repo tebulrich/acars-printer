@@ -62,17 +62,16 @@ def test_header_reg_callsign_stamp():
         ),
     )
     lines = out.splitlines()
-    assert lines[0] == "ACARS START"
-    assert lines[1] == "=" * 48  # 80mm default columns
-    assert lines[2] == "D-AILA ----  DLH4MC 04AUG 1809Z"
-    assert lines[3] == "-" * 48
-    assert "CLEARANCE REQUEST RECEIVED" in out
+    assert lines[0] == "ACARS BEGIN"
+    assert lines[1] == "D-AILA ----  DLH4MC 04AUG 1809Z"
+    assert lines[2] == "CLEARANCE REQUEST RECEIVED"
     assert "STANDBY" in out
+    assert "=" * 8 not in out
+    assert lines[-2] == ""
     assert lines[-1] == "ACARS END"
-    assert "----" in lines[2]
 
 
-def test_empty_registration_omits_dashes():
+def test_empty_registration_still_leads_with_dashes():
     out = ThermalMessageFormatter().format(
         _msg(
             callsign="DLH4MC",
@@ -80,9 +79,8 @@ def test_empty_registration_omits_dashes():
         ),
         PrinterSettings("console", paper_width="80"),
     )
-    header = out.splitlines()[2]
-    assert header == "DLH4MC 04AUG 1809Z"
-    assert "----" not in header
+    header = out.splitlines()[1]
+    assert header == "----  DLH4MC 04AUG 1809Z"
     assert not header.startswith("D-")
 
 
@@ -108,11 +106,11 @@ def test_atis_with_registration_includes_callsign():
             aircraft_registration="D-AILA",
         ),
     )
-    assert out.splitlines()[2] == "D-AILA ----  DLH4MC 04AUG 1805Z"
+    assert out.splitlines()[1] == "D-AILA ----  DLH4MC 04AUG 1805Z"
     assert "VATATIS" not in out
     assert "DEP-ATIS EDDF G METAR 041750" in out
-    assert out.startswith("ACARS START")
-    assert "=" * 8 in out
+    assert out.startswith("ACARS BEGIN")
+    assert "=" * 8 not in out
 
 
 def test_58mm_width_and_token_wrap():
@@ -126,7 +124,7 @@ def test_58mm_width_and_token_wrap():
     assert PrinterSettings("console", paper_width="58").characters_per_line() == 32
     assert "N850" in out
     assert "N85\n0" not in out
-    assert out.startswith("ACARS START")
+    assert out.startswith("ACARS BEGIN")
     assert "ACARS END" in out
 
 
@@ -154,7 +152,7 @@ def test_inforeq_prints_atis_body_not_hoppie_request():
             aircraft_registration="D-AIXX",
         ),
     )
-    assert out.splitlines()[2] == "D-AIXX ----  DLH9911 02AUG 1810Z"
+    assert out.splitlines()[1] == "D-AIXX ----  DLH9911 02AUG 1810Z"
     assert "VATATIS" not in out
     assert "EDDH DEP ATIS H" in out
     assert out.rstrip().endswith("ACARS END")
@@ -181,7 +179,7 @@ def test_inforeq_unavailable_shows_station():
     assert "EDDH DEP ATIS" in out
     assert "VATATIS" not in out
     assert "THIS ATIS IS NOT" in out
-    assert "ACARS START" in out
+    assert "ACARS BEGIN" in out
     assert out.rstrip().endswith("ACARS END")
 
 
@@ -196,10 +194,8 @@ def test_test_page_is_demo_pdc_strip():
         PrinterSettings("console", paper_width="80"),
     )
     lines = out.splitlines()
-    assert lines[0] == "ACARS START"
-    # Empty registration → no sample tail injected.
-    assert lines[2] == "DLH4MC 04AUG 1809Z"
-    assert "----" not in lines[2]
+    assert lines[0] == "ACARS BEGIN"
+    assert lines[1] == "----  DLH4MC 04AUG 1809Z"
     assert "FULL WIDTH" not in out
     assert "----+----1" not in out
     assert "CLD 1807 260804 EDDF PDC 001" in out
@@ -212,17 +208,16 @@ def test_test_page_uses_configured_registration():
     out = ThermalMessageFormatter().test_page(
         PrinterSettings("console", paper_width="80", aircraft_registration="D-AIXX"),
     )
-    assert out.splitlines()[2] == "D-AIXX ----  DLH4MC 04AUG 1809Z"
+    assert out.splitlines()[1] == "D-AIXX ----  DLH4MC 04AUG 1809Z"
 
 
-def test_test_page_empty_registration_omits_dashes():
+def test_test_page_empty_registration_leads_with_dashes():
     out = ThermalMessageFormatter().test_page(
         PrinterSettings("console", paper_width="80", aircraft_registration=""),
     )
-    header = out.splitlines()[2]
-    assert header == "DLH4MC 04AUG 1809Z"
+    header = out.splitlines()[1]
+    assert header == "----  DLH4MC 04AUG 1809Z"
     assert "D-AILA" not in out
-    assert "----" not in header
 
 
 def test_pdc_prints_wrapped_not_one_word_per_line():
